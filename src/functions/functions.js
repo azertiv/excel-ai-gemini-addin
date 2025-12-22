@@ -496,7 +496,9 @@ export async function SUMMARIZE(textOrRange, options) {
 // ---------- Associations (important) ----------
 // This prevents “function exists but not bound” issues in some environments.
 try {
+  // Support both the correct id (AI.KEY_STATUS) and the legacy id (AI.KEYSTATUS)
   CustomFunctions.associate("AI.KEY_STATUS", KEY_STATUS);
+  CustomFunctions.associate("AI.KEYSTATUS", KEY_STATUS);
   CustomFunctions.associate("AI.TEST", TEST);
   CustomFunctions.associate("AI.ASK", ASK);
   CustomFunctions.associate("AI.EXTRACT", EXTRACT);

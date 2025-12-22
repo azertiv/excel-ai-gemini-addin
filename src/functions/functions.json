@@ -89,7 +89,7 @@
       "result": { "type": "string", "dimensionality": "scalar" }
     },
     {
-      "id": "AI.KEYSTATUS",
+      "id": "AI.KEY_STATUS",
       "name": "KEY_STATUS",
       "description": "Return OK if a Gemini API key is present, else MISSING.",
       "parameters": [],
