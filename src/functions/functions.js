@@ -3,6 +3,7 @@
 
 import { geminiGenerate, geminiMinimalTest } from "../shared/gemini.js";
 import { ERR, DEFAULTS, LIMITS } from "../shared/constants.js";
+import { getApiKey } from "../shared/storage.js";
 
 // ---------- helpers ----------
 
@@ -35,6 +36,16 @@ function errorCode(code) {
   // Prefer your ERR constants; fall back safely
   if (typeof code === "string" && code.startsWith("#")) return code;
   return ERR?.API_ERROR || "#AI_API_ERROR";
+}
+
+function asCustomError(code, message) {
+  if (typeof CustomFunctions === "undefined" || !CustomFunctions.Error) {
+    // Fallback to plain string to avoid throwing in environments without CustomFunctions
+    return errorCode(code);
+  }
+
+  const friendly = message || code || "Unexpected error";
+  return new CustomFunctions.Error(CustomFunctions.ErrorCode.invalidValue, friendly);
 }
 
 function to2DRange(values) {
@@ -161,27 +172,35 @@ function objectTo2ColSpill(obj) {
  */
 export async function KEY_STATUS() {
   try {
-    // geminiGenerate will return KEY_MISSING if not present; but for status we can shortcut by calling test with no key.
-    // We do not have direct access to key here (stored in shared/storage). So use geminiGenerate semantics:
-    // Instead, rely on geminiMinimalTest which will return KEY_MISSING without key.
-    const res = await geminiMinimalTest({ timeoutMs: 2000 });
-    if (!res.ok && (res.code === ERR.KEY_MISSING || res.code === "#AI_KEY_MISSING")) return "MISSING";
+    const key = (await getApiKey()) || "";
+    if (!key.trim()) return "MISSING";
+
+    // Run a quick ping only when a key exists, so the status reflects both presence and basic validity
+    const res = await geminiMinimalTest({ timeoutMs: 4000 });
+    if (!res.ok) return asCustomError(res.code, res.message);
     return "OK";
   } catch {
-    return "MISSING";
+    return asCustomError(ERR.API_ERROR, "Unable to read key status");
   }
 }
 
 /**
  * =AI.TEST()
  */
-export async function TEST() {
+export async function TEST(options) {
   try {
-    const res = await geminiMinimalTest({ timeoutMs: DEFAULTS?.timeoutMs || 15000 });
-    if (!res.ok) return errorCode(res.code);
+    const opt = parseOptions(options);
+    if (opt._invalidOptions) return asCustomError(ERR.BAD_INPUT, "Invalid options JSON");
+
+    const res = await geminiMinimalTest({
+      model: opt.model,
+      timeoutMs: typeof opt.timeoutMs === "number" ? opt.timeoutMs : (DEFAULTS?.timeoutMs || 15000)
+    });
+
+    if (!res.ok) return asCustomError(res.code, res.message);
     return "OK";
   } catch (e) {
-    return errorCode(ERR.API_ERROR);
+    return asCustomError(ERR.API_ERROR, e?.message || "Test failure");
   }
 }
 
@@ -191,10 +210,10 @@ export async function TEST() {
 export async function ASK(prompt, contextRange, options) {
   try {
     const p = safeString(prompt).trim();
-    if (!p) return errorCode(ERR.BAD_INPUT);
+    if (!p) return asCustomError(ERR.BAD_INPUT, "Missing prompt");
 
     const opt = parseOptions(options);
-    if (opt._invalidOptions) return errorCode(ERR.BAD_INPUT);
+    if (opt._invalidOptions) return asCustomError(ERR.BAD_INPUT, "Invalid options JSON");
 
     const lang = safeString(opt.lang || "fr").trim();
     const ctx = contextToText(contextRange, 3500);
@@ -208,10 +227,10 @@ export async function ASK(prompt, contextRange, options) {
       `User request (language=${lang}):\n${p}`;
 
     const res = await callText({ system, user, optionsJson: options, cacheMode: "memory" });
-    if (!res.ok) return errorCode(res.code);
+    if (!res.ok) return asCustomError(res.code, res.message);
     return maxCellTrim(res.text);
   } catch (e) {
-    return errorCode(ERR.API_ERROR);
+    return asCustomError(ERR.API_ERROR, e?.message || "Ask failed");
   }
 }
 
@@ -224,16 +243,16 @@ export async function TRANSLATE(text, targetLang, options) {
     if (!t) return "";
 
     const lang = safeString(targetLang).trim();
-    if (!lang) return errorCode(ERR.BAD_INPUT);
+    if (!lang) return asCustomError(ERR.BAD_INPUT, "Missing target language");
 
     const system = `You translate text. Output ONLY the translated text. No quotes.`;
     const user = `Translate to ${lang}:\n${t}`;
 
     const res = await callText({ system, user, optionsJson: options, cacheMode: "memory" });
-    if (!res.ok) return errorCode(res.code);
+    if (!res.ok) return asCustomError(res.code, res.message);
     return maxCellTrim(res.text);
   } catch {
-    return errorCode(ERR.API_ERROR);
+    return asCustomError(ERR.API_ERROR, "Translate failed");
   }
 }
 
@@ -247,11 +266,11 @@ export async function CLASSIFY(text, labels, options) {
     if (!t) return "UNKNOWN";
 
     const opt = parseOptions(options);
-    if (opt._invalidOptions) return errorCode(ERR.BAD_INPUT);
+    if (opt._invalidOptions) return asCustomError(ERR.BAD_INPUT, "Invalid options JSON");
 
     const threshold = typeof opt.threshold === "number" ? opt.threshold : 0.6;
     const labs = Array.isArray(labels) ? to2DRange(labels) : to2DRange(safeString(labels));
-    if (!labs.length) return errorCode(ERR.BAD_INPUT);
+    if (!labs.length) return asCustomError(ERR.BAD_INPUT, "Missing labels");
 
     const system =
       `You are a classifier. Choose exactly ONE label from the provided list.` +
@@ -266,7 +285,7 @@ export async function CLASSIFY(text, labels, options) {
     const localOptions = JSON.stringify({ ...(opt || {}), temperature: 0.0, maxTokens: Math.max(16, opt.maxTokens || 16) });
 
     const res = await callText({ system, user, optionsJson: localOptions, cacheMode: "memory" });
-    if (!res.ok) return errorCode(res.code);
+    if (!res.ok) return asCustomError(res.code, res.message);
 
     const out = safeString(res.text).trim();
     if (!out) return "UNKNOWN";
@@ -280,7 +299,7 @@ export async function CLASSIFY(text, labels, options) {
     if (threshold >= 0.0) return "UNKNOWN";
     return "UNKNOWN";
   } catch {
-    return errorCode(ERR.API_ERROR);
+    return asCustomError(ERR.API_ERROR, "Classify failed");
   }
 }
 
@@ -440,7 +459,7 @@ export async function CLEAN(text, options) {
     if (!t.trim()) return "";
 
     const opt = parseOptions(options);
-    if (opt._invalidOptions) return errorCode(ERR.BAD_INPUT);
+    if (opt._invalidOptions) return asCustomError(ERR.BAD_INPUT, "Invalid options JSON");
 
     // Non-AI clean by default
     const mode = safeString(opt.mode || "basic").toLowerCase();
@@ -456,10 +475,10 @@ export async function CLEAN(text, options) {
     const localOptions = JSON.stringify({ ...(opt || {}), temperature: 0.0, maxTokens: Math.max(128, opt.maxTokens || 128) });
 
     const res = await callText({ system, user, optionsJson: localOptions, cacheMode: "memory" });
-    if (!res.ok) return errorCode(res.code);
+    if (!res.ok) return asCustomError(res.code, res.message);
     return maxCellTrim(res.text);
   } catch {
-    return errorCode(ERR.API_ERROR);
+    return asCustomError(ERR.API_ERROR, "Clean failed");
   }
 }
 
@@ -469,7 +488,7 @@ export async function CLEAN(text, options) {
 export async function SUMMARIZE(textOrRange, options) {
   try {
     const opt = parseOptions(options);
-    if (opt._invalidOptions) return errorCode(ERR.BAD_INPUT);
+    if (opt._invalidOptions) return asCustomError(ERR.BAD_INPUT, "Invalid options JSON");
 
     let t = "";
     if (Array.isArray(textOrRange)) {
@@ -486,10 +505,10 @@ export async function SUMMARIZE(textOrRange, options) {
     const localOptions = JSON.stringify({ ...(opt || {}), temperature: 0.2, maxTokens: Math.max(256, opt.maxTokens || 256) });
 
     const res = await callText({ system, user, optionsJson: localOptions, cacheMode: "memory" });
-    if (!res.ok) return errorCode(res.code);
+    if (!res.ok) return asCustomError(res.code, res.message);
     return maxCellTrim(res.text);
   } catch {
-    return errorCode(ERR.API_ERROR);
+    return asCustomError(ERR.API_ERROR, "Summarize failed");
   }
 }
 
