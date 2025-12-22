@@ -2,8 +2,8 @@
 /* global CustomFunctions */
 
 import { geminiGenerate, geminiMinimalTest } from "../shared/gemini.js";
-import { ERR, DEFAULTS, LIMITS } from "../shared/constants.js";
 import { getApiKey } from "../shared/storage.js";
+import { ERR, DEFAULTS, LIMITS } from "../shared/constants.js";
 
 // ---------- helpers ----------
 
@@ -28,179 +28,236 @@ function parseOptions(optionsJson) {
     const obj = JSON.parse(s);
     return obj && typeof obj === "object" ? obj : {};
   } catch {
-    return { _invalidOptions: true };
+    return {};
   }
+}
+
+function clamp(n, min, max, fallback) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return fallback;
+  return Math.min(max, Math.max(min, x));
 }
 
 function errorCode(code) {
-  // Prefer your ERR constants; fall back safely
-  if (typeof code === "string" && code.startsWith("#")) return code;
-  return ERR?.API_ERROR || "#AI_API_ERROR";
+  return code || ERR.API_ERROR;
 }
 
-function asCustomError(code, message) {
-  if (typeof CustomFunctions === "undefined" || !CustomFunctions.Error) {
-    // Fallback to plain string to avoid throwing in environments without CustomFunctions
-    return errorCode(code);
+function normalizeNewlines(s) {
+  return String(s || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+}
+
+function matrixToTSV(matrix, maxChars = LIMITS.MAX_CONTEXT_CHARS) {
+  if (!Array.isArray(matrix)) return "";
+  let out = "";
+  for (const row of matrix) {
+    if (out.length >= maxChars) break;
+    const r = Array.isArray(row) ? row : [row];
+    const line = r.map((c) => safeString(c).replace(/\t/g, " ").replace(/\n/g, " ")).join("\t");
+    if (out) out += "\n";
+    out += line;
   }
-
-  const friendly = message || code || "Unexpected error";
-  return new CustomFunctions.Error(CustomFunctions.ErrorCode.invalidValue, friendly);
+  if (out.length > maxChars) out = out.slice(0, maxChars) + "\n…(truncated)";
+  return out;
 }
 
-function to2DRange(values) {
-  // values can be string "a|b|c" or 2D array from Excel.
-  if (Array.isArray(values)) {
-    // flatten 2D into list of non-empty strings
+function flattenLabels(labelsOrRange) {
+  if (labelsOrRange === null || labelsOrRange === undefined) return [];
+  if (typeof labelsOrRange === "string") {
+    // accept "A|B|C" or "A,B,C"
+    const s = labelsOrRange.trim();
+    if (!s) return [];
+    const parts = s.includes("|") ? s.split("|") : s.split(/[,;\n]+/);
+    return parts.map((x) => x.trim()).filter(Boolean);
+  }
+  if (Array.isArray(labelsOrRange)) {
+    // matrix -> flatten
     const out = [];
-    for (const row of values) {
-      if (!Array.isArray(row)) continue;
-      for (const cell of row) {
-        const s = safeString(cell).trim();
-        if (s) out.push(s);
+    for (const row of labelsOrRange) {
+      if (Array.isArray(row)) {
+        for (const cell of row) {
+          const v = safeString(cell).trim();
+          if (v) out.push(v);
+        }
+      } else {
+        const v = safeString(row).trim();
+        if (v) out.push(v);
       }
     }
     return out;
   }
-  // string form: "A|B|C"
-  const s = safeString(values).trim();
-  if (!s) return [];
-  return s.split("|").map((x) => x.trim()).filter(Boolean);
+  const s = safeString(labelsOrRange).trim();
+  return s ? [s] : [];
 }
 
-function contextToText(contextRange, maxChars = 3500) {
-  if (!contextRange) return "";
-  if (!Array.isArray(contextRange)) return "";
-
-  // Serialize as TSV-like lines, trimmed
-  const lines = [];
-  for (const row of contextRange) {
-    if (!Array.isArray(row)) continue;
-    lines.push(row.map((c) => safeString(c)).join("\t"));
-    if (lines.join("\n").length > maxChars) break;
+function safeJsonParse(s) {
+  try {
+    return { ok: true, value: JSON.parse(s) };
+  } catch (e) {
+    return { ok: false, error: e };
   }
-  let t = lines.join("\n");
-  if (t.length > maxChars) t = t.slice(0, maxChars) + "\n…(truncated)";
-  return t;
 }
 
-function clamp(n, lo, hi) {
-  n = Number(n);
-  if (!Number.isFinite(n)) return lo;
-  return Math.max(lo, Math.min(hi, n));
+function coerceToTextOrJoin2D(v) {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "string") return v;
+  if (Array.isArray(v)) {
+    // if matrix, join as TSV
+    if (v.length === 0) return "";
+    if (Array.isArray(v[0])) return matrixToTSV(v, LIMITS.MAX_INPUT_CHARS);
+    return v.map((x) => safeString(x)).join("\n");
+  }
+  return safeString(v);
 }
 
-function buildGenConfig(opt) {
-  const temperature = typeof opt.temperature === "number" ? opt.temperature : (DEFAULTS?.temperature ?? 0.2);
-  const maxOutputTokens = typeof opt.maxTokens === "number" ? opt.maxTokens : (DEFAULTS?.maxTokens ?? 256);
-  return {
-    temperature: clamp(temperature, 0, 1),
-    maxOutputTokens: clamp(maxOutputTokens, 1, 4096),
-  };
+function truncateForCell(s, maxChars = LIMITS.MAX_CELL_CHARS) {
+  const t = normalizeNewlines(s);
+  if (t.length <= maxChars) return t;
+  return t.slice(0, maxChars) + "\n…(truncated)";
 }
 
-function maxCellTrim(text) {
-  let t = safeString(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  t = t.trim();
-  const limit = LIMITS?.MAX_CELL_CHARS || 28000;
-  if (t.length > limit) t = t.slice(0, limit) + "\n…(truncated)";
-  return t;
+// ---------- per-function prompting ----------
+
+function sysAsk(lang = "fr") {
+  return [
+    "You are an assistant embedded in Microsoft Excel custom functions.",
+    `Respond in ${lang}.`,
+    "Return a concise answer suitable for a single Excel cell (1 to 10 short lines).",
+    "No Markdown. No code fences. No surrounding quotes.",
+    "If the question cannot be answered from the provided information, say so briefly and suggest what to add."
+  ].join("\n");
 }
 
-async function callText({ system, user, optionsJson, cacheMode }) {
-  const opt = parseOptions(optionsJson);
-  if (opt._invalidOptions) return { ok: false, code: ERR.BAD_INPUT || "#AI_BAD_INPUT", message: "Invalid options JSON" };
+function sysTranslate(targetLang) {
+  return [
+    "You are a translation engine.",
+    `Translate the user text into ${targetLang}.`,
+    "Return only the translated text. No quotes. No explanations."
+  ].join("\n");
+}
+
+function sysClassify(labels, lang = "en") {
+  return [
+    "You are a strict classifier.",
+    `Return exactly one label from this set: ${labels.join(" | ")}`,
+    "If uncertain, return exactly: UNKNOWN",
+    `Respond in ${lang}.`,
+    "Return only the label."
+  ].join("\n");
+}
+
+function sysClean(lang = "fr") {
+  return [
+    "You are a text normalizer for spreadsheet cells.",
+    `Respond in ${lang}.`,
+    "Return only the cleaned text.",
+    "No quotes. No explanations."
+  ].join("\n");
+}
+
+function sysSummarize(lang = "fr") {
+  return [
+    "You summarize text for a spreadsheet cell.",
+    `Respond in ${lang}.`,
+    "Return 3 to 7 bullet points.",
+    "Use '-' as bullet prefix.",
+    "No Markdown headers. No code fences."
+  ].join("\n");
+}
+
+function sysExtract(fields, lang = "fr") {
+  return [
+    "You extract structured fields from unstructured text.",
+    `Respond in ${lang}.`,
+    "Return STRICT JSON only (no Markdown, no code fences).",
+    "Return an object with ONLY these keys:",
+    fields.join(", "),
+    "If a value is missing, use null.",
+    "Dates should be ISO 8601 if possible.",
+    "Numbers must be numbers (no currency symbols)."
+  ].join("\n");
+}
+
+function sysTable(lang = "fr", maxRows = LIMITS.MAX_TABLE_ROWS, maxCols = LIMITS.MAX_TABLE_COLS, headers = null) {
+  const headerLine = Array.isArray(headers) && headers.length ? `Use these headers exactly: ${headers.join(", ")}` : "";
+  return [
+    "You generate a table for Excel.",
+    `Respond in ${lang}.`,
+    "Return STRICT JSON only (no Markdown, no code fences).",
+    "Return an object with shape: {\"headers\": string[], \"rows\": any[][]}.",
+    `The number of columns must be <= ${maxCols}.`,
+    `The number of rows must be <= ${maxRows}.`,
+    "The first row of the spilled output will be headers.",
+    headerLine,
+    "Cells must be scalars (string/number/boolean/null)."
+  ].filter(Boolean).join("\n");
+}
+
+function sysFill(lang = "fr", maxRows = LIMITS.MAX_FILL_ROWS) {
+  return [
+    "You are filling spreadsheet cells based on examples.",
+    `Respond in ${lang}.`,
+    "Return STRICT JSON only (no Markdown, no code fences).",
+    "Return an object with shape: {\"values\": string[]}.",
+    `Return at most ${maxRows} values.`,
+    "Return only the values, in order, one per target row.",
+    "If a value is unknown, return an empty string for that row."
+  ].join("\n");
+}
+
+// ---------- core call wrapper ----------
+
+async function callGemini({ system, user, options }) {
+  const opt = options || {};
+  const temperature = typeof opt.temperature === "number" ? clamp(opt.temperature, 0, 1, DEFAULTS.temperature) : DEFAULTS.temperature;
+  const maxTokens = typeof opt.maxTokens === "number" ? clamp(opt.maxTokens, 1, 2048, DEFAULTS.maxTokens) : DEFAULTS.maxTokens;
+
+  const timeoutMs = typeof opt.timeoutMs === "number" ? clamp(opt.timeoutMs, 1000, 60000, DEFAULTS.timeoutMs) : DEFAULTS.timeoutMs;
+  const retry = typeof opt.retry === "number" ? clamp(opt.retry, 0, 2, DEFAULTS.retry) : DEFAULTS.retry;
+
+  const cacheMode = typeof opt.cache === "string" ? opt.cache : DEFAULTS.cache;
+  const cacheTtlSec = typeof opt.cacheTtlSec === "number" ? clamp(opt.cacheTtlSec, 0, 24 * 3600, DEFAULTS.cacheTtlSec) : DEFAULTS.cacheTtlSec;
 
   const res = await geminiGenerate({
     model: opt.model,
     system,
     user,
-    generationConfig: buildGenConfig(opt),
-    cache: opt.cache || cacheMode || DEFAULTS?.cache || "memory",
-    cacheTtlSec: typeof opt.cacheTtlSec === "number" ? opt.cacheTtlSec : DEFAULTS?.cacheTtlSec,
-    timeoutMs: typeof opt.timeoutMs === "number" ? opt.timeoutMs : DEFAULTS?.timeoutMs,
-    retry: typeof opt.retry === "number" ? opt.retry : DEFAULTS?.retry,
+    generationConfig: { temperature, maxOutputTokens: maxTokens },
+    cache: cacheMode,
+    cacheTtlSec,
+    timeoutMs,
+    retry
     // responseMimeType/responseJsonSchema supported in your gemini.js already if needed
   });
 
   return res;
 }
 
-function parseJsonStrict(s) {
-  const txt = safeString(s).trim();
-  if (!txt) return null;
-  // remove fenced code blocks if any
-  const unfenced = txt
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/```$/i, "")
-    .trim();
-  try {
-    return JSON.parse(unfenced);
-  } catch {
-    return null;
-  }
-}
-
-function fieldsFromSchema(schemaOrFields) {
-  const raw = safeString(schemaOrFields).trim();
-  if (!raw) return [];
-  // Try JSON schema map: {"email":"string",...}
-  const maybeObj = parseJsonStrict(raw);
-  if (maybeObj && typeof maybeObj === "object" && !Array.isArray(maybeObj)) {
-    return Object.keys(maybeObj);
-  }
-  // Comma list: "email, phone, amount"
-  return raw.split(",").map((x) => x.trim()).filter(Boolean);
-}
-
-function objectTo2ColSpill(obj) {
-  const rows = [["field", "value"]];
-  if (obj && typeof obj === "object") {
-    for (const k of Object.keys(obj)) {
-      const v = obj[k];
-      rows.push([k, (v === null || v === undefined) ? "" : (typeof v === "string" ? v : JSON.stringify(v))]);
-    }
-  }
-  return rows;
-}
-
-// ---------- Custom Functions (public) ----------
+// ---------- Custom Functions ----------
 
 /**
  * =AI.KEY_STATUS()
+ * Returns "OK" if the API key is present, else "MISSING".
  */
 export async function KEY_STATUS() {
   try {
-    const key = (await getApiKey()) || "";
-    if (!key.trim()) return "MISSING";
-
-    // Run a quick ping only when a key exists, so the status reflects both presence and basic validity
-    const res = await geminiMinimalTest({ timeoutMs: 4000 });
-    if (!res.ok) return asCustomError(res.code, res.message);
-    return "OK";
+    const key = await getApiKey();
+    return key ? "OK" : "MISSING";
   } catch {
-    return asCustomError(ERR.API_ERROR, "Unable to read key status");
+    return "MISSING";
   }
 }
 
 /**
  * =AI.TEST()
+ * Minimal API call to confirm Gemini connectivity.
  */
-export async function TEST(options) {
+export async function TEST() {
   try {
-    const opt = parseOptions(options);
-    if (opt._invalidOptions) return asCustomError(ERR.BAD_INPUT, "Invalid options JSON");
-
-    const res = await geminiMinimalTest({
-      model: opt.model,
-      timeoutMs: typeof opt.timeoutMs === "number" ? opt.timeoutMs : (DEFAULTS?.timeoutMs || 15000)
-    });
-
-    if (!res.ok) return asCustomError(res.code, res.message);
+    const res = await geminiMinimalTest({ timeoutMs: DEFAULTS?.timeoutMs || 15000 });
+    if (!res.ok) return errorCode(res.code);
     return "OK";
   } catch (e) {
-    return asCustomError(ERR.API_ERROR, e?.message || "Test failure");
+    return errorCode(ERR.API_ERROR);
   }
 }
 
@@ -209,28 +266,24 @@ export async function TEST(options) {
  */
 export async function ASK(prompt, contextRange, options) {
   try {
-    const p = safeString(prompt).trim();
-    if (!p) return asCustomError(ERR.BAD_INPUT, "Missing prompt");
-
     const opt = parseOptions(options);
-    if (opt._invalidOptions) return asCustomError(ERR.BAD_INPUT, "Invalid options JSON");
+    const lang = opt.lang || "fr";
 
-    const lang = safeString(opt.lang || "fr").trim();
-    const ctx = contextToText(contextRange, 3500);
+    const ctx = contextRange ? matrixToTSV(contextRange, opt.maxContextChars || LIMITS.MAX_CONTEXT_CHARS) : "";
+    const user = [ctx ? `CONTEXT (TSV, may be truncated):\n${ctx}` : "", `USER PROMPT:\n${coerceToTextOrJoin2D(prompt)}`]
+      .filter(Boolean)
+      .join("\n\n");
 
-    const system =
-      `You are an assistant for Excel users. Respond concisely (1-10 lines).` +
-      ` If the user requests a language, comply. Output plain text only.`;
+    const res = await callGemini({
+      system: sysAsk(lang),
+      user,
+      options: opt
+    });
 
-    const user =
-      (ctx ? `Context (table/range):\n${ctx}\n\n` : "") +
-      `User request (language=${lang}):\n${p}`;
-
-    const res = await callText({ system, user, optionsJson: options, cacheMode: "memory" });
-    if (!res.ok) return asCustomError(res.code, res.message);
-    return maxCellTrim(res.text);
+    if (!res.ok) return errorCode(res.code);
+    return truncateForCell(res.text);
   } catch (e) {
-    return asCustomError(ERR.API_ERROR, e?.message || "Ask failed");
+    return errorCode(ERR.API_ERROR);
   }
 }
 
@@ -239,214 +292,53 @@ export async function ASK(prompt, contextRange, options) {
  */
 export async function TRANSLATE(text, targetLang, options) {
   try {
-    const t = safeString(text).trim();
-    if (!t) return "";
-
-    const lang = safeString(targetLang).trim();
-    if (!lang) return asCustomError(ERR.BAD_INPUT, "Missing target language");
-
-    const system = `You translate text. Output ONLY the translated text. No quotes.`;
-    const user = `Translate to ${lang}:\n${t}`;
-
-    const res = await callText({ system, user, optionsJson: options, cacheMode: "memory" });
-    if (!res.ok) return asCustomError(res.code, res.message);
-    return maxCellTrim(res.text);
-  } catch {
-    return asCustomError(ERR.API_ERROR, "Translate failed");
+    const opt = parseOptions(options);
+    const lang = safeString(targetLang).trim() || "en";
+    const res = await callGemini({
+      system: sysTranslate(lang),
+      user: normalizeNewlines(coerceToTextOrJoin2D(text)),
+      options: opt
+    });
+    if (!res.ok) return errorCode(res.code);
+    return truncateForCell(res.text);
+  } catch (e) {
+    return errorCode(ERR.API_ERROR);
   }
 }
 
 /**
  * =AI.CLASSIFY(text, labels, [options])
- * labels can be "A|B|C" or a range
  */
 export async function CLASSIFY(text, labels, options) {
   try {
-    const t = safeString(text).trim();
-    if (!t) return "UNKNOWN";
-
     const opt = parseOptions(options);
-    if (opt._invalidOptions) return asCustomError(ERR.BAD_INPUT, "Invalid options JSON");
+    const lang = opt.lang || "en";
+    const threshold = typeof opt.threshold === "number" ? clamp(opt.threshold, 0, 1, 0.55) : 0.55;
 
-    const threshold = typeof opt.threshold === "number" ? opt.threshold : 0.6;
-    const labs = Array.isArray(labels) ? to2DRange(labels) : to2DRange(safeString(labels));
-    if (!labs.length) return asCustomError(ERR.BAD_INPUT, "Missing labels");
+    const labs = flattenLabels(labels);
+    if (!labs.length) return errorCode(ERR.BAD_INPUT);
 
-    const system =
-      `You are a classifier. Choose exactly ONE label from the provided list.` +
-      ` If unsure, output EXACTLY "UNKNOWN". Output one token / one label only.`;
+    const system = sysClassify(labs, lang);
+    const user = [
+      "TEXT:",
+      normalizeNewlines(coerceToTextOrJoin2D(text)),
+      "",
+      `Return only one label. If confidence < ${threshold}, return UNKNOWN.`
+    ].join("\n");
 
-    const user =
-      `Labels: ${labs.join(" | ")}\n\n` +
-      `Text:\n${t}\n\n` +
-      `Return one label or UNKNOWN.`;
+    const res = await callGemini({ system, user, options: opt });
+    if (!res.ok) return errorCode(res.code);
 
-    // encourage determinism
-    const localOptions = JSON.stringify({ ...(opt || {}), temperature: 0.0, maxTokens: Math.max(16, opt.maxTokens || 16) });
+    const out = normalizeNewlines(res.text).trim();
+    // strict output
+    const outUpper = out.toUpperCase();
+    if (outUpper === "UNKNOWN") return "UNKNOWN";
 
-    const res = await callText({ system, user, optionsJson: localOptions, cacheMode: "memory" });
-    if (!res.ok) return asCustomError(res.code, res.message);
-
-    const out = safeString(res.text).trim();
-    if (!out) return "UNKNOWN";
-
-    // If model returns something not in labels, map to UNKNOWN
-    const normalized = out.replace(/["'.]/g, "").trim();
-    const hit = labs.find((l) => l.toLowerCase() === normalized.toLowerCase());
-    if (hit) return hit;
-
-    // If user sets threshold, we can't compute real probability; keep UNKNOWN as safe default.
-    if (threshold >= 0.0) return "UNKNOWN";
-    return "UNKNOWN";
-  } catch {
-    return asCustomError(ERR.API_ERROR, "Classify failed");
-  }
-}
-
-/**
- * =AI.EXTRACT(text, schemaOrFields, [options])
- * Returns spill 2 columns: field | value OR JSON if options.return="json"
- */
-export async function EXTRACT(text, schemaOrFields, options) {
-  try {
-    const input = safeString(text).trim();
-    if (!input) return [["field", "value"]];
-
-    const opt = parseOptions(options);
-    if (opt._invalidOptions) return [[errorCode(ERR.BAD_INPUT), "Invalid options JSON"]];
-
-    const fields = fieldsFromSchema(schemaOrFields);
-    if (!fields.length) return [[errorCode(ERR.BAD_INPUT), "Missing fields/schema"]];
-
-    const wantJson = safeString(opt.return || "").toLowerCase() === "json";
-
-    const system =
-      `Extract structured fields from text.` +
-      ` Output STRICT JSON object with keys exactly as requested. Do not include extra keys.` +
-      ` Use empty string for missing values.`;
-
-    const user =
-      `Fields: ${fields.join(", ")}\n\n` +
-      `Text:\n${input}\n\n` +
-      `Return JSON only.`;
-
-    const localOptions = JSON.stringify({ ...(opt || {}), temperature: 0.0, maxTokens: Math.max(256, opt.maxTokens || 256) });
-
-    const res = await callText({ system, user, optionsJson: localOptions, cacheMode: "memory" });
-    if (!res.ok) return [[errorCode(res.code), res.message || "Error"]];
-
-    const obj = parseJsonStrict(res.text);
-    if (!obj || typeof obj !== "object") {
-      // fallback: return raw text to help debugging
-      return [[errorCode(ERR.API_ERROR), "Bad JSON output"]];
-    }
-
-    if (wantJson) return maxCellTrim(JSON.stringify(obj));
-    return objectTo2ColSpill(obj);
-  } catch {
-    return [[errorCode(ERR.API_ERROR), "Error"]];
-  }
-}
-
-/**
- * =AI.TABLE(prompt, [contextRange], [options])
- * Returns 2D array (spill), first row headers
- */
-export async function TABLE(prompt, contextRange, options) {
-  try {
-    const p = safeString(prompt).trim();
-    if (!p) return [[errorCode(ERR.BAD_INPUT), "Missing prompt"]];
-
-    const opt = parseOptions(options);
-    if (opt._invalidOptions) return [[errorCode(ERR.BAD_INPUT), "Invalid options JSON"]];
-
-    const ctx = contextToText(contextRange, 3500);
-    const maxRows = typeof opt.maxRows === "number" ? Math.max(1, Math.min(200, Math.floor(opt.maxRows))) : 20;
-    const headers = Array.isArray(opt.headers) ? opt.headers.map(safeString) : [];
-    const nCols = typeof opt.nbColonnes === "number" ? Math.max(1, Math.min(30, Math.floor(opt.nbColonnes))) : 0;
-
-    const system =
-      `You generate tabular data for Excel.` +
-      ` Output STRICT JSON with shape: {"headers":[...], "rows":[[...],[...]]}.` +
-      ` No markdown. No prose.`;
-
-    const user =
-      (ctx ? `Context:\n${ctx}\n\n` : "") +
-      `Task:\n${p}\n\n` +
-      (headers.length ? `Preferred headers: ${headers.join(", ")}\n` : "") +
-      (nCols ? `Number of columns: ${nCols}\n` : "") +
-      `Max rows: ${maxRows}\n\n` +
-      `Return JSON only.`;
-
-    const localOptions = JSON.stringify({ ...(opt || {}), temperature: 0.0, maxTokens: Math.max(512, opt.maxTokens || 512) });
-
-    const res = await callText({ system, user, optionsJson: localOptions, cacheMode: "memory" });
-    if (!res.ok) return [[errorCode(res.code), res.message || "Error"]];
-
-    const obj = parseJsonStrict(res.text);
-    if (!obj || typeof obj !== "object") return [[errorCode(ERR.API_ERROR), "Bad JSON output"]];
-
-    const outHeaders = Array.isArray(obj.headers) ? obj.headers.map(safeString) : [];
-    const outRows = Array.isArray(obj.rows) ? obj.rows : [];
-
-    if (!outHeaders.length || !outRows.length) {
-      return [[errorCode(ERR.EMPTY_RESPONSE), "Empty table"]];
-    }
-
-    // Normalize rows length to headers length
-    const hLen = outHeaders.length;
-    const rows2d = [outHeaders];
-    for (let i = 0; i < Math.min(outRows.length, maxRows); i++) {
-      const r = Array.isArray(outRows[i]) ? outRows[i] : [];
-      const row = [];
-      for (let c = 0; c < hLen; c++) row.push(safeString(r[c] ?? ""));
-      rows2d.push(row);
-    }
-    return rows2d;
-  } catch {
-    return [[errorCode(ERR.API_ERROR), "Error"]];
-  }
-}
-
-/**
- * =AI.FILL(exampleRange, targetRange, instruction, [options])
- * Returns a spill corresponding to suggested values for targetRange rows.
- */
-export async function FILL(exampleRange, targetRange, instruction, options) {
-  try {
-    const instr = safeString(instruction).trim();
-    if (!instr) return [[errorCode(ERR.BAD_INPUT), "Missing instruction"]];
-
-    const opt = parseOptions(options);
-    if (opt._invalidOptions) return [[errorCode(ERR.BAD_INPUT), "Invalid options JSON"]];
-
-    const ex = contextToText(exampleRange, 3000);
-    const tgt = contextToText(targetRange, 2000);
-
-    const system =
-      `You are helping fill Excel columns.` +
-      ` Return STRICT JSON: {"rows":["v1","v2",...]} with one value per target row.` +
-      ` No markdown.`;
-
-    const user =
-      `Instruction:\n${instr}\n\n` +
-      `Examples (range):\n${ex}\n\n` +
-      `Target (range):\n${tgt}\n\n` +
-      `Return JSON only.`;
-
-    const localOptions = JSON.stringify({ ...(opt || {}), temperature: 0.0, maxTokens: Math.max(512, opt.maxTokens || 512) });
-
-    const res = await callText({ system, user, optionsJson: localOptions, cacheMode: "memory" });
-    if (!res.ok) return [[errorCode(res.code), res.message || "Error"]];
-
-    const obj = parseJsonStrict(res.text);
-    const rows = Array.isArray(obj?.rows) ? obj.rows : null;
-    if (!rows) return [[errorCode(ERR.API_ERROR), "Bad JSON output"]];
-
-    // Spill as single column
-    return rows.slice(0, 500).map((v) => [safeString(v)]);
-  } catch {
-    return [[errorCode(ERR.API_ERROR), "Error"]];
+    // match one of labels (case-insensitive)
+    const match = labs.find((l) => l.toLowerCase() === out.toLowerCase());
+    return match || "UNKNOWN";
+  } catch (e) {
+    return errorCode(ERR.API_ERROR);
   }
 }
 
@@ -455,30 +347,33 @@ export async function FILL(exampleRange, targetRange, instruction, options) {
  */
 export async function CLEAN(text, options) {
   try {
-    const t = safeString(text);
-    if (!t.trim()) return "";
-
     const opt = parseOptions(options);
-    if (opt._invalidOptions) return asCustomError(ERR.BAD_INPUT, "Invalid options JSON");
+    const mode = (opt.mode || "basic").toLowerCase();
 
-    // Non-AI clean by default
-    const mode = safeString(opt.mode || "basic").toLowerCase();
+    const raw = normalizeNewlines(coerceToTextOrJoin2D(text));
+    if (!raw.trim()) return "";
+
     if (mode === "basic") {
-      return t
-        .replace(/\s+/g, " ")
-        .trim();
+      // non-AI deterministic
+      let s = raw.trim();
+      s = s.replace(/[ \t]+/g, " ");
+      s = s.replace(/\n{3,}/g, "\n\n");
+      if (opt.case === "upper") s = s.toUpperCase();
+      if (opt.case === "lower") s = s.toLowerCase();
+      return truncateForCell(s);
     }
 
-    // AI clean if requested
-    const system = `Normalize the text. Output ONLY the cleaned text.`;
-    const user = `Clean/normalize:\n${t}`;
-    const localOptions = JSON.stringify({ ...(opt || {}), temperature: 0.0, maxTokens: Math.max(128, opt.maxTokens || 128) });
+    const lang = opt.lang || "fr";
+    const res = await callGemini({
+      system: sysClean(lang),
+      user: raw,
+      options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 }
+    });
 
-    const res = await callText({ system, user, optionsJson: localOptions, cacheMode: "memory" });
-    if (!res.ok) return asCustomError(res.code, res.message);
-    return maxCellTrim(res.text);
-  } catch {
-    return asCustomError(ERR.API_ERROR, "Clean failed");
+    if (!res.ok) return errorCode(res.code);
+    return truncateForCell(res.text);
+  } catch (e) {
+    return errorCode(ERR.API_ERROR);
   }
 }
 
@@ -488,45 +383,278 @@ export async function CLEAN(text, options) {
 export async function SUMMARIZE(textOrRange, options) {
   try {
     const opt = parseOptions(options);
-    if (opt._invalidOptions) return asCustomError(ERR.BAD_INPUT, "Invalid options JSON");
+    const lang = opt.lang || "fr";
+    const raw = normalizeNewlines(coerceToTextOrJoin2D(textOrRange));
+    if (!raw.trim()) return "";
 
-    let t = "";
-    if (Array.isArray(textOrRange)) {
-      t = contextToText(textOrRange, 3500);
-    } else {
-      t = safeString(textOrRange);
-    }
-    t = t.trim();
-    if (!t) return "";
+    const res = await callGemini({
+      system: sysSummarize(lang),
+      user: raw,
+      options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.2 }
+    });
 
-    const system = `Summarize content into concise bullet points. Output plain text bullets only.`;
-    const user = `Summarize:\n${t}`;
-
-    const localOptions = JSON.stringify({ ...(opt || {}), temperature: 0.2, maxTokens: Math.max(256, opt.maxTokens || 256) });
-
-    const res = await callText({ system, user, optionsJson: localOptions, cacheMode: "memory" });
-    if (!res.ok) return asCustomError(res.code, res.message);
-    return maxCellTrim(res.text);
-  } catch {
-    return asCustomError(ERR.API_ERROR, "Summarize failed");
+    if (!res.ok) return errorCode(res.code);
+    return truncateForCell(res.text);
+  } catch (e) {
+    return errorCode(ERR.API_ERROR);
   }
 }
 
-// ---------- Associations (important) ----------
-// This prevents “function exists but not bound” issues in some environments.
-try {
-  // Support both the correct id (AI.KEY_STATUS) and the legacy id (AI.KEYSTATUS)
-  CustomFunctions.associate("AI.KEY_STATUS", KEY_STATUS);
-  CustomFunctions.associate("AI.KEYSTATUS", KEY_STATUS);
-  CustomFunctions.associate("AI.TEST", TEST);
-  CustomFunctions.associate("AI.ASK", ASK);
-  CustomFunctions.associate("AI.EXTRACT", EXTRACT);
-  CustomFunctions.associate("AI.CLASSIFY", CLASSIFY);
-  CustomFunctions.associate("AI.TRANSLATE", TRANSLATE);
-  CustomFunctions.associate("AI.TABLE", TABLE);
-  CustomFunctions.associate("AI.FILL", FILL);
-  CustomFunctions.associate("AI.CLEAN", CLEAN);
-  CustomFunctions.associate("AI.SUMMARIZE", SUMMARIZE);
-} catch {
-  // ignore (Excel will still try to bind via metadata, but associate is recommended)
+// --- EXTRACT helpers ---
+
+function parseSchemaOrFields(schemaOrFields) {
+  const raw = safeString(schemaOrFields).trim();
+  if (!raw) return { ok: false, fields: [], types: {} };
+
+  // try JSON schema
+  if (raw.startsWith("{") && raw.endsWith("}")) {
+    const p = safeJsonParse(raw);
+    if (p.ok && p.value && typeof p.value === "object" && !Array.isArray(p.value)) {
+      const fields = Object.keys(p.value).map((k) => k.trim()).filter(Boolean);
+      const types = {};
+      for (const k of fields) {
+        const t = p.value[k];
+        types[k] = typeof t === "string" ? t : safeString(t);
+      }
+      return { ok: fields.length > 0, fields, types };
+    }
+  }
+
+  // treat as list
+  const fields = raw
+    .split(/[,;\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  return { ok: fields.length > 0, fields, types: {} };
+}
+
+function extractJsonObject(text) {
+  const s = String(text || "").trim();
+  if (!s) return null;
+
+  // If already valid JSON object
+  const p1 = safeJsonParse(s);
+  if (p1.ok && p1.value && typeof p1.value === "object") return p1.value;
+
+  // Try to locate first {...} block
+  const start = s.indexOf("{");
+  const end = s.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    const candidate = s.slice(start, end + 1);
+    const p2 = safeJsonParse(candidate);
+    if (p2.ok && p2.value && typeof p2.value === "object") return p2.value;
+  }
+  return null;
+}
+
+/**
+ * =AI.EXTRACT(text, schemaOrFields, [options])
+ * returns spill: [field | value] unless options.return="json"
+ */
+export async function EXTRACT(text, schemaOrFields, options) {
+  try {
+    const opt = parseOptions(options);
+    const lang = opt.lang || "fr";
+    const schema = parseSchemaOrFields(schemaOrFields);
+    if (!schema.ok) return errorCode(ERR.BAD_SCHEMA);
+
+    const raw = normalizeNewlines(coerceToTextOrJoin2D(text));
+    if (!raw.trim()) {
+      if (opt.return === "json") return "{}";
+      return schema.fields.map((f) => [f, ""]);
+    }
+
+    const res = await callGemini({
+      system: sysExtract(schema.fields, lang),
+      user: raw,
+      options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 }
+    });
+
+    if (!res.ok) return errorCode(res.code);
+
+    const obj = extractJsonObject(res.text);
+    if (!obj) return errorCode(ERR.PARSE_ERROR);
+
+    if (opt.return === "json") {
+      // return compact JSON string
+      try {
+        return truncateForCell(JSON.stringify(obj));
+      } catch {
+        return errorCode(ERR.PARSE_ERROR);
+      }
+    }
+
+    // 2-col spill
+    const out = [];
+    for (const f of schema.fields) {
+      const v = obj[f];
+      out.push([f, v === null || v === undefined ? "" : safeString(v)]);
+    }
+    return out;
+  } catch (e) {
+    return errorCode(ERR.API_ERROR);
+  }
+}
+
+/**
+ * =AI.TABLE(prompt, [contextRange], [options])
+ * returns 2D table with headers in first row
+ */
+export async function TABLE(prompt, contextRange, options) {
+  try {
+    const opt = parseOptions(options);
+    const lang = opt.lang || "fr";
+    const maxRows = clamp(opt.maxRows, 1, LIMITS.MAX_TABLE_ROWS, LIMITS.MAX_TABLE_ROWS);
+    const maxCols = clamp(opt.maxCols, 1, LIMITS.MAX_TABLE_COLS, LIMITS.MAX_TABLE_COLS);
+    const headers = Array.isArray(opt.headers) ? opt.headers.map((h) => safeString(h)) : null;
+
+    const ctx = contextRange ? matrixToTSV(contextRange, opt.maxContextChars || LIMITS.MAX_CONTEXT_CHARS) : "";
+    const user = [ctx ? `CONTEXT (TSV, may be truncated):\n${ctx}` : "", `PROMPT:\n${coerceToTextOrJoin2D(prompt)}`]
+      .filter(Boolean)
+      .join("\n\n");
+
+    const res = await callGemini({
+      system: sysTable(lang, maxRows, maxCols, headers),
+      user,
+      options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.1 }
+    });
+
+    if (!res.ok) return errorCode(res.code);
+
+    const obj = extractJsonObject(res.text);
+    if (!obj) return errorCode(ERR.PARSE_ERROR);
+
+    const h = Array.isArray(obj.headers) ? obj.headers.map((x) => safeString(x)) : [];
+    const rows = Array.isArray(obj.rows) ? obj.rows : [];
+    if (!h.length) return errorCode(ERR.PARSE_ERROR);
+
+    const clippedHeaders = h.slice(0, maxCols);
+    const out = [clippedHeaders];
+
+    const rowCount = Math.min(rows.length, maxRows);
+    for (let i = 0; i < rowCount; i++) {
+      const r = Array.isArray(rows[i]) ? rows[i] : [];
+      const line = [];
+      for (let c = 0; c < clippedHeaders.length; c++) {
+        const v = r[c];
+        line.push(v === null || v === undefined ? "" : safeString(v));
+      }
+      out.push(line);
+    }
+
+    return out;
+  } catch (e) {
+    return errorCode(ERR.API_ERROR);
+  }
+}
+
+/**
+ * =AI.FILL(exampleRange, targetRange, instruction, [options])
+ * Returns spill values corresponding to target rows.
+ */
+export async function FILL(exampleRange, targetRange, instruction, options) {
+  try {
+    const opt = parseOptions(options);
+    const lang = opt.lang || "fr";
+
+    const examples = Array.isArray(exampleRange) ? exampleRange : [];
+    const targets = Array.isArray(targetRange) ? targetRange : [];
+
+    // Derive number of rows to fill from targetRange
+    const targetRows = Array.isArray(targets) ? targets.length : 0;
+    if (!targetRows) return [];
+
+    const maxRows = clamp(opt.maxRows, 1, LIMITS.MAX_FILL_ROWS, Math.min(LIMITS.MAX_FILL_ROWS, targetRows));
+    const rowsToFill = Math.min(targetRows, maxRows);
+
+    // Build compact example pairs: take first 40 rows of [input | output]
+    const exTSV = matrixToTSV(examples, 2000);
+    const tgtTSV = matrixToTSV(targets.slice(0, rowsToFill), 4000);
+
+    const user = [
+      "INSTRUCTION:",
+      normalizeNewlines(coerceToTextOrJoin2D(instruction)),
+      "",
+      "EXAMPLES (TSV):",
+      exTSV,
+      "",
+      "TARGET INPUTS (TSV):",
+      tgtTSV
+    ].join("\n");
+
+    const res = await callGemini({
+      system: sysFill(lang, rowsToFill),
+      user,
+      options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 }
+    });
+
+    if (!res.ok) return errorCode(res.code);
+
+    const obj = extractJsonObject(res.text);
+    if (!obj || !Array.isArray(obj.values)) return errorCode(ERR.PARSE_ERROR);
+
+    const values = obj.values.slice(0, rowsToFill).map((x) => safeString(x));
+    // spill as column
+    return values.map((v) => [truncateForCell(v, LIMITS.MAX_CELL_CHARS)]);
+  } catch (e) {
+    return errorCode(ERR.API_ERROR);
+  }
+}
+
+/**
+ * Register custom functions by associating the JSON metadata `id` values to implementations.
+ *
+ * IMPORTANT:
+ * - In functions.json, each `id` can only contain alphanumeric characters and periods.
+ *   That is why the status function uses id "AI.KEYSTATUS" even though the Excel function
+ *   name exposed to the user is AI.KEY_STATUS (because the *name* in functions.json is KEY_STATUS).
+ * - Never let a single failed association prevent registering the other functions.
+ */
+function registerCustomFunctions() {
+  if (typeof CustomFunctions === "undefined" || typeof CustomFunctions.associate !== "function") return false;
+
+  const pairs = [
+    ["AI.ASK", ASK],
+    ["AI.EXTRACT", EXTRACT],
+    ["AI.CLASSIFY", CLASSIFY],
+    ["AI.TRANSLATE", TRANSLATE],
+    ["AI.TABLE", TABLE],
+    ["AI.FILL", FILL],
+    ["AI.CLEAN", CLEAN],
+    ["AI.SUMMARIZE", SUMMARIZE],
+    ["AI.KEYSTATUS", KEY_STATUS],
+    ["AI.TEST", TEST]
+  ];
+
+  let any = false;
+  for (const [id, fn] of pairs) {
+    try {
+      CustomFunctions.associate(id, fn);
+      any = true;
+    } catch (e) {
+      // Keep going so one bad association doesn't break all functions.
+      try { console.warn(`[AI] CustomFunctions.associate failed for ${id}`, e); } catch { /* ignore */ }
+    }
+  }
+
+  return any;
+}
+
+// Attempt immediate registration.
+const _registered = registerCustomFunctions();
+
+// If CustomFunctions wasn't ready yet, retry a few times (non-blocking).
+if (!_registered && typeof setTimeout === "function") {
+  let attempts = 0;
+  const maxAttempts = 20; // ~10s
+  const intervalMs = 500;
+
+  const tick = () => {
+    attempts++;
+    if (registerCustomFunctions() || attempts >= maxAttempts) return;
+    setTimeout(tick, intervalMs);
+  };
+
+  setTimeout(tick, 0);
 }
