@@ -91,7 +91,12 @@ async function fetchWithTimeout(url, fetchOptions, timeoutMs) {
 function extractCandidateText(json) {
   const candidates = json?.candidates;
   if (!Array.isArray(candidates) || candidates.length === 0) return "";
-  const parts = candidates[0]?.content?.parts;
+
+  const content = candidates[0]?.content;
+  const parts = Array.isArray(content)
+    ? content.flatMap((c) => (Array.isArray(c?.parts) ? c.parts : [])).filter(Boolean)
+    : (Array.isArray(content?.parts) ? content.parts : []);
+
   if (!Array.isArray(parts) || parts.length === 0) return "";
 
   const rendered = parts
