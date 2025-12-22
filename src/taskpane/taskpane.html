@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AI Settings (Gemini)</title>
+  <link rel="stylesheet" href="taskpane.css" />
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+</head>
+
+<body>
+  <div class="container">
+    <h1>AI Functions (Gemini)</h1>
+
+    <p class="muted">
+      Cette extension n’utilise <strong>aucun backend</strong>. La clé API Gemini est stockée <strong>localement</strong>
+      (OfficeRuntime.storage si disponible, sinon localStorage) et utilisée par les Custom Functions.
+      Ne collez pas de clé sur un poste partagé.
+    </p>
+
+    <div class="card">
+      <div class="row">
+        <label for="apiKeyInput">Gemini API Key</label>
+        <input id="apiKeyInput" type="password" placeholder="Collez la clé API ici" autocomplete="off" />
+      </div>
+
+      <div class="buttons">
+        <button id="saveKeyBtn" class="primary">Save</button>
+        <button id="testBtn">Test API</button>
+        <button id="clearKeyBtn" class="danger">Clear key</button>
+      </div>
+
+      <div class="statusRow">
+        <div>Key status: <span id="keyStatus" class="status missing">MISSING</span></div>
+        <div>Storage: <span id="backend" class="mono">…</span></div>
+      </div>
+
+      <div id="message" class="message"></div>
+    </div>
+
+    <div class="card">
+      <h2>Diagnostics</h2>
+      <pre id="diag" class="diag mono">…</pre>
+    </div>
+
+    <div class="card">
+      <h2>Exemples rapides</h2>
+      <pre class="mono example">=AI.KEY_STATUS()
+=AI.TEST()
+=AI.ASK("Résume le tableau", A1:C20)
+=AI.EXTRACT(A2, "email, phone, amount, date")
+=AI.CLASSIFY(A2, "Paid|Pending|Cancelled", "{""threshold"":0.7}")
+=AI.TRANSLATE("Bonjour", "en")
+=AI.TABLE("Génère 5 idées",, "{""headers"":[""Titre"",""Détail""],""maxRows"":5}")
+=AI.FILL(A2:B6, A7:A20, "Normalise la catégorie")</pre>
+      <p class="muted">
+        Note: pour passer un JSON dans Excel, il faut doubler les guillemets :
+        <span class="mono">{""lang"":""fr""}</span>
+      </p>
+    </div>
+  </div>
+
+  <script src="taskpane.js"></script>
+</body>
+</html>

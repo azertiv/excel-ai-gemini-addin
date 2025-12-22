@@ -1,0 +1,31 @@
+{
+  "name": "excel-ai-gemini-addin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Excel Custom Functions (AI namespace) powered by Google Gemini API (no backend).",
+  "scripts": {
+    "dev-server": "webpack serve --mode development",
+    "build": "webpack --mode production",
+    "start": "concurrently -k \"npm run dev-server\" \"wait-on https://localhost:3000/taskpane.html && office-addin-debugging start manifest.xml desktop --app excel\"",
+    "start:web": "concurrently -k \"npm run dev-server\" \"wait-on https://localhost:3000/taskpane.html && office-addin-debugging start manifest.xml web --app excel\"",
+    "stop": "office-addin-debugging stop manifest.xml",
+    "validate": "office-addin-manifest validate manifest.xml",
+    "dev-certs": "office-addin-dev-certs install",
+    "clean": "rimraf dist"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.26.0",
+    "@babel/preset-env": "^7.26.0",
+    "babel-loader": "^9.2.1",
+    "concurrently": "^9.1.2",
+    "copy-webpack-plugin": "^12.0.2",
+    "office-addin-debugging": "^6.0.3",
+    "office-addin-dev-certs": "^1.13.4",
+    "office-addin-manifest": "^2.1.2",
+    "rimraf": "^6.0.1",
+    "wait-on": "^7.2.0",
+    "webpack": "^5.97.1",
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^5.1.0"
+  }
+}

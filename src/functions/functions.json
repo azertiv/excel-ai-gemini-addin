@@ -1,0 +1,108 @@
+{
+  "allowErrorForDataTypeAny": true,
+  "functions": [
+    {
+      "id": "AI.ASK",
+      "name": "ASK",
+      "description": "Ask Gemini with optional context range.",
+      "parameters": [
+        { "name": "prompt", "description": "Question or instruction.", "type": "string", "dimensionality": "scalar" },
+        { "name": "contextRange", "description": "Optional range used as context (values).", "type": "any", "dimensionality": "matrix", "optional": true },
+        { "name": "options", "description": "Optional JSON options string.", "type": "string", "dimensionality": "scalar", "optional": true }
+      ],
+      "result": { "type": "string", "dimensionality": "scalar" }
+    },
+    {
+      "id": "AI.EXTRACT",
+      "name": "EXTRACT",
+      "description": "Extract structured fields from text. Returns [field|value] as a spill.",
+      "parameters": [
+        { "name": "text", "description": "Input text.", "type": "string", "dimensionality": "scalar" },
+        { "name": "schemaOrFields", "description": "Field list (comma-separated) or a JSON schema string.", "type": "string", "dimensionality": "scalar" },
+        { "name": "options", "description": "Optional JSON options (e.g., {\"return\":\"json\"}).", "type": "string", "dimensionality": "scalar", "optional": true }
+      ],
+      "result": { "type": "string", "dimensionality": "matrix" }
+    },
+    {
+      "id": "AI.CLASSIFY",
+      "name": "CLASSIFY",
+      "description": "Classify text into one label (or UNKNOWN if not confident).",
+      "parameters": [
+        { "name": "text", "description": "Input text.", "type": "string", "dimensionality": "scalar" },
+        { "name": "labels", "description": "Labels as \"A|B|C\" or a range.", "type": "any", "dimensionality": "scalar" },
+        { "name": "options", "description": "Optional JSON options (threshold, unknownLabel).", "type": "string", "dimensionality": "scalar", "optional": true }
+      ],
+      "result": { "type": "string", "dimensionality": "scalar" }
+    },
+    {
+      "id": "AI.TRANSLATE",
+      "name": "TRANSLATE",
+      "description": "Translate text to target language (fr, en, de...).",
+      "parameters": [
+        { "name": "text", "description": "Input text.", "type": "string", "dimensionality": "scalar" },
+        { "name": "targetLang", "description": "Language code (e.g., \"en\").", "type": "string", "dimensionality": "scalar" },
+        { "name": "options", "description": "Optional JSON options.", "type": "string", "dimensionality": "scalar", "optional": true }
+      ],
+      "result": { "type": "string", "dimensionality": "scalar" }
+    },
+    {
+      "id": "AI.TABLE",
+      "name": "TABLE",
+      "description": "Generate a 2D table (spill) with headers as first row.",
+      "parameters": [
+        { "name": "prompt", "description": "Table generation prompt.", "type": "string", "dimensionality": "scalar" },
+        { "name": "contextRange", "description": "Optional context range.", "type": "any", "dimensionality": "matrix", "optional": true },
+        { "name": "options", "description": "Optional JSON options (headers, maxRows, numColumns...).", "type": "string", "dimensionality": "scalar", "optional": true }
+      ],
+      "result": { "type": "string", "dimensionality": "matrix" }
+    },
+    {
+      "id": "AI.FILL",
+      "name": "FILL",
+      "description": "Fill outputs for target inputs using examples. Returns a vertical spill.",
+      "parameters": [
+        { "name": "exampleRange", "description": "2-column examples [input|output].", "type": "any", "dimensionality": "matrix" },
+        { "name": "targetRange", "description": "1-column inputs to transform.", "type": "any", "dimensionality": "matrix" },
+        { "name": "instruction", "description": "Transformation instruction.", "type": "string", "dimensionality": "scalar" },
+        { "name": "options", "description": "Optional JSON options.", "type": "string", "dimensionality": "scalar", "optional": true }
+      ],
+      "result": { "type": "string", "dimensionality": "matrix" }
+    },
+    {
+      "id": "AI.CLEAN",
+      "name": "CLEAN",
+      "description": "Clean/normalize text (local deterministic by default; AI mode optional).",
+      "parameters": [
+        { "name": "text", "description": "Input text.", "type": "string", "dimensionality": "scalar" },
+        { "name": "options", "description": "Optional JSON options (ai/mode/case...).", "type": "string", "dimensionality": "scalar", "optional": true }
+      ],
+      "result": { "type": "string", "dimensionality": "scalar" }
+    },
+    {
+      "id": "AI.SUMMARIZE",
+      "name": "SUMMARIZE",
+      "description": "Summarize text or a range into bullet points (one cell).",
+      "parameters": [
+        { "name": "textOrRange", "description": "Text or range to summarize.", "type": "any", "dimensionality": "scalar" },
+        { "name": "options", "description": "Optional JSON options (maxBullets...).", "type": "string", "dimensionality": "scalar", "optional": true }
+      ],
+      "result": { "type": "string", "dimensionality": "scalar" }
+    },
+    {
+      "id": "AI.KEYSTATUS",
+      "name": "KEY_STATUS",
+      "description": "Return OK if a Gemini API key is present, else MISSING.",
+      "parameters": [],
+      "result": { "type": "string", "dimensionality": "scalar" }
+    },
+    {
+      "id": "AI.TEST",
+      "name": "TEST",
+      "description": "Perform a minimal API call to Gemini and return OK or an error code.",
+      "parameters": [
+        { "name": "options", "description": "Optional JSON options (model, timeoutMs...).", "type": "string", "dimensionality": "scalar", "optional": true }
+      ],
+      "result": { "type": "string", "dimensionality": "scalar" }
+    }
+  ]
+}
