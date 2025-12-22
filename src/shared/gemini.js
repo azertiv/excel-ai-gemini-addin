@@ -93,7 +93,23 @@ function extractCandidateText(json) {
   if (!Array.isArray(candidates) || candidates.length === 0) return "";
   const parts = candidates[0]?.content?.parts;
   if (!Array.isArray(parts) || parts.length === 0) return "";
-  return parts.map((p) => (typeof p?.text === "string" ? p.text : "")).join("");
+
+  const rendered = parts
+    .map((p) => {
+      if (typeof p?.text === "string") return p.text;
+      if (p?.functionCall) {
+        const name = p.functionCall.name || "functionCall";
+        const args = p.functionCall.args ? `(${JSON.stringify(p.functionCall.args)})` : "";
+        return `${name}${args}`;
+      }
+      if (p?.inlineData?.data) return p.inlineData.data;
+      if (p?.executableCode?.code) return p.executableCode.code;
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+
+  return rendered;
 }
 
 function isBlockedResponse(json) {
@@ -328,6 +344,7 @@ export async function geminiMinimalTest(options = {}) {
     system: "You are a connectivity test. Reply with exactly: OK",
     user: "Return OK.",
     generationConfig: { temperature: 0.0, maxOutputTokens: 8 },
+    responseMimeType: "text/plain",
     cache: "none",
     timeoutMs: options.timeoutMs,
     retry: 0
