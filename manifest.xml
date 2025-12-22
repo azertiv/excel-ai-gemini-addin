@@ -17,7 +17,7 @@
   <SupportUrl DefaultValue="https://example.com/support"/>
 
   <AppDomains>
-    <AppDomain>localhost</AppDomain>
+    <AppDomain>azertiv.github.io</AppDomain>
     <AppDomain>generativelanguage.googleapis.com</AppDomain>
     <AppDomain>googleapis.com</AppDomain>
   </AppDomains>
