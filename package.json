@@ -6,8 +6,8 @@
   "scripts": {
     "dev-server": "webpack serve --mode development",
     "build": "webpack --mode production",
-    "start": "concurrently -k \"npm run dev-server\" \"wait-on https://azertiv.github.io/excel-ai-gemini-addin/src/taskpane/taskpane.html && office-addin-debugging start manifest.xml desktop --app excel\"",
-    "start:web": "concurrently -k \"npm run dev-server\" \"wait-on https://azertiv.github.io/excel-ai-gemini-addin/src/taskpane/taskpane.html && office-addin-debugging start manifest.xml web --app excel\"",
+    "start": "concurrently -k \"npm run dev-server\" \"wait-on https://azertiv.github.io/excel-ai-gemini-addin/taskpane.html && office-addin-debugging start manifest.xml desktop --app excel\"",
+    "start:web": "concurrently -k \"npm run dev-server\" \"wait-on https://azertiv.github.io/excel-ai-gemini-addin/taskpane.html && office-addin-debugging start manifest.xml web --app excel\"",
     "stop": "office-addin-debugging stop manifest.xml",
     "validate": "office-addin-manifest validate manifest.xml",
     "dev-certs": "office-addin-dev-certs install",
