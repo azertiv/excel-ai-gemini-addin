@@ -391,7 +391,7 @@ export async function geminiMinimalTest(options = {}) {
     model: options.model,
     system: "You are a connectivity test. Reply with exactly: OK",
     user: "Return OK.",
-    generationConfig: { temperature: 0.0, maxOutputTokens: 8 },
+    generationConfig: { temperature: 0.0, maxOutputTokens: 64 },
     responseMimeType: "text/plain",
     cache: "none",
     timeoutMs: options.timeoutMs,
