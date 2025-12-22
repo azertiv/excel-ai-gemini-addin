@@ -1,63 +1,125 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <meta charset="utf-8" />
-    <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>AI Settings (Gemini)</title>
-    <link rel="stylesheet" href="taskpane.css" />
-    <!-- Office.js est requis pour le Shared Runtime -->
-    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AI Settings (Gemini)</title>
+  <link rel="stylesheet" href="taskpane.css" />
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <style>
+    /* Styles spécifiques pour les onglets et les logs */
+    .tabs { display: flex; border-bottom: 1px solid #e5e5e5; margin-bottom: 12px; cursor: pointer; }
+    .tab { padding: 8px 16px; font-weight: 600; font-size: 13px; color: #666; transition: color 0.2s; }
+    .tab:hover { color: #333; }
+    .tab.active { color: #0f6cbd; border-bottom: 2px solid #0f6cbd; }
+    
+    .tab-content { display: none; }
+    .tab-content.active { display: block; animation: fadeIn 0.3s; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+    .log-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+    .stat-box { background: #f0f9ff; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #cceeff; }
+    .stat-val { font-size: 16px; font-weight: 700; color: #005a9e; }
+    .stat-lbl { font-size: 10px; color: #555; text-transform: uppercase; margin-top: 2px; }
+
+    .log-list { 
+        font-family: "Consolas", monospace; font-size: 11px; 
+        max-height: 350px; overflow-y: auto; 
+        border: 1px solid #eee; border-radius: 6px; background: #fff;
+    }
+    .log-item { 
+        display: grid; grid-template-columns: 45px 1fr 70px; 
+        padding: 8px; border-bottom: 1px solid #f3f3f3; 
+        align-items: center; gap: 6px;
+    }
+    .log-item:last-child { border-bottom: none; }
+    .log-item.err .log-main { color: #a4262c; }
+    .log-item.err .log-time { color: #a4262c; font-weight: bold; }
+    
+    .log-time { font-size: 10px; color: #888; }
+    .log-main { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .log-code { font-size: 10px; background: #eee; padding: 1px 4px; border-radius: 3px; margin-left: 4px; color: #333; }
+    .log-meta { text-align: right; font-size: 9px; color: #888; display: flex; flex-direction: column; }
+    
+    .badge { display: inline-block; padding: 2px 5px; border-radius: 4px; font-size: 9px; font-weight: bold; }
+    .badge.cached { background: #dff6dd; color: #107c10; border: 1px solid #bce2be; }
+    
+    .refresh-btn { width: 100%; margin-top: 8px; padding: 6px; font-size: 12px; }
+  </style>
 </head>
 
 <body>
-<div class="container">
+  <div class="container">
     <h1>AI Functions (Gemini)</h1>
-    <h4>V1.2 (Shared Runtime)</h4>
-
-    <p class="muted">
-        Cette extension utilise le <strong>Shared Runtime</strong>. La clé API est partagée entre ce panneau et les fonctions Excel.
-    </p>
-
-    <div class="card">
-        <div class="row">
-            <label for="apiKeyInput">Gemini API Key</label>
-            <input id="apiKeyInput" type="password" placeholder="Collez la clé API ici" autocomplete="off" />
-        </div>
-
-        <div class="buttons">
-            <button id="saveKeyBtn" class="primary">Save</button>
-            <button id="testBtn">Test API</button>
-            <button id="clearKeyBtn" class="danger">Clear key</button>
-        </div>
-
-        <div class="statusRow">
-            <div>Key status: <span id="keyStatus" class="status missing">MISSING</span></div>
-            <div>Storage: <span id="backend" class="mono">…</span></div>
-        </div>
-
-        <div id="message" class="message"></div>
-        <pre id="testDiagnostics" class="diag mono" style="display:none"></pre>
+    
+    <div class="tabs">
+      <div class="tab active" data-target="settings">Configuration</div>
+      <div class="tab" data-target="logs">Logs & Coûts</div>
     </div>
 
-    <div class="card">
-        <h2>Diagnostics</h2>
-        <pre id="diag" class="diag mono">…</pre>
+    <!-- TAB 1: SETTINGS -->
+    <div id="settings" class="tab-content active">
+        <p class="muted">
+          Shared Runtime actif. Les fonctions sont exécutées localement.
+        </p>
+
+        <div class="card">
+            <div class="row">
+                <label for="apiKeyInput">Gemini API Key</label>
+                <input id="apiKeyInput" type="password" placeholder="Collez la clé API ici" autocomplete="off" />
+            </div>
+
+            <div class="buttons">
+                <button id="saveKeyBtn" class="primary">Save</button>
+                <button id="testBtn">Test API</button>
+                <button id="clearKeyBtn" class="danger">Clear</button>
+            </div>
+
+            <div class="statusRow">
+                <div>Key status: <span id="keyStatus" class="status missing">MISSING</span></div>
+                <div>Backend: <span id="backend" class="mono">...</span></div>
+            </div>
+
+            <div id="message" class="message"></div>
+            <pre id="testDiagnostics" class="diag mono" style="display:none"></pre>
+        </div>
+
+        <div class="card">
+            <h2>Exemples</h2>
+            <pre class="mono example">=AI.TABLE("Liste les pays de l'UE et leur capitale")
+=AI.ASK("Explique la physique quantique",, "{""maxTokens"":1000}")
+=AI.EXTRACT(A2, "nom,email,tel")</pre>
+        </div>
     </div>
 
-    <div class="card">
-        <h2>Exemples</h2>
-        <pre class="mono example">=AI.ASK("Explique la relativité", A1)
-=AI.EXTRACT(A2, "nom, date, montant")
-=AI.TABLE("Génère 3 produits fictifs")
-=AI.TEST()</pre>
+    <!-- TAB 2: LOGS -->
+    <div id="logs" class="tab-content">
+        <div class="card">
+            <div class="log-stats">
+                <div class="stat-box">
+                    <div class="stat-val" id="totalTokens">0</div>
+                    <div class="stat-lbl">Tokens (In+Out)</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-val" id="estCost">$0.0000</div>
+                    <div class="stat-lbl">Coût Estimé</div>
+                </div>
+            </div>
+            
+            <div class="log-list" id="logList">
+                <div style="padding:15px; text-align:center; color:#999; font-style:italic;">Aucune requête récente</div>
+            </div>
+            
+            <button id="refreshLogsBtn" class="refresh-btn">Rafraîchir les logs</button>
+        </div>
     </div>
-</div>
 
-<!-- IMPORTANT : Chargement des scripts compilés -->
-<!-- functions.js doit être chargé pour que CustomFunctions.associate s'exécute dans le Shared Runtime -->
-<script type="text/javascript" src="functions.js"></script>
-<script type="text/javascript" src="taskpane.js"></script>
+  </div>
+
+  <!-- IMPORTANT: Load functions.js before taskpane.js for Shared Runtime -->
+  <script type="text/javascript" src="functions.js"></script>
+  <script type="text/javascript" src="taskpane.js"></script>
 
 </body>
 </html>

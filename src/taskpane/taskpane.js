@@ -1,11 +1,88 @@
+// src/taskpane/taskpane.js
+
 import { getApiKey, setApiKey, clearApiKey, storageBackend } from "../shared/storage";
 import { geminiMinimalTest } from "../shared/gemini";
-import { getDiagnosticsSnapshot, formatDiagnosticsForUi } from "../shared/diagnostics";
+import { getDiagnosticsSnapshot } from "../shared/diagnostics";
 
 let els = {};
 
 function $(id) { return document.getElementById(id); }
 
+// --- LOGIQUE ONGLETS ---
+function initTabs() {
+  document.querySelectorAll('.tab').forEach(t => {
+    t.addEventListener('click', () => {
+      // Switch active tab
+      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(x => x.classList.remove('active'));
+      
+      t.classList.add('active');
+      const targetId = t.dataset.target;
+      document.getElementById(targetId).classList.add('active');
+
+      // Refresh specific tab data
+      if(targetId === 'logs') updateLogsUI();
+    });
+  });
+}
+
+// --- LOGIQUE LOGS ---
+function formatTime(iso) {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute:'2-digit', second:'2-digit' });
+}
+
+function updateLogsUI() {
+  try {
+    const snap = getDiagnosticsSnapshot();
+    
+    // 1. Stats
+    const total = (snap.totalInputTokens || 0) + (snap.totalOutputTokens || 0);
+    const cost = (snap.estimatedCostUSD || 0);
+    
+    if (els.totalTokens) els.totalTokens.textContent = total.toLocaleString();
+    if (els.estCost) els.estCost.textContent = '$' + cost.toFixed(5);
+
+    // 2. Liste Logs
+    const list = els.logList;
+    if (!list) return;
+
+    if (!snap.logs || snap.logs.length === 0) {
+      list.innerHTML = '<div style="padding:15px; text-align:center; color:#999; font-style:italic;">Aucune requête récente</div>';
+      return;
+    }
+
+    let html = "";
+    for (const log of snap.logs) {
+      const isErr = !log.success;
+      const cacheBadge = log.cached ? '<span class="badge cached">CACHE</span>' : '';
+      const tokensInfo = log.cached ? '-' : `${log.inputTokens} &rarr; ${log.outputTokens}`;
+      
+      html += `
+        <div class="log-item ${isErr ? 'err' : ''}">
+          <div class="log-time">${formatTime(log.at)}</div>
+          
+          <div class="log-main">
+             ${cacheBadge}
+             <span title="${log.model}">${log.model}</span>
+             <span class="log-code">${log.code}</span>
+          </div>
+          
+          <div class="log-meta">
+             <div>${tokensInfo}</div>
+             <div>${log.latencyMs}ms</div>
+          </div>
+        </div>
+      `;
+    }
+    list.innerHTML = html;
+  } catch (e) {
+    console.error("Error updating logs UI", e);
+  }
+}
+
+// --- LOGIQUE SETTINGS ---
 function setTestDiagnostics(text) {
   if (!els.testDiag) return;
   if (text) {
@@ -25,12 +102,9 @@ function formatTestDiagnostics(res) {
   if (typeof d.httpStatus === "number") lines.push(`httpStatus: ${d.httpStatus}`);
   if (typeof d.candidates === "number") lines.push(`candidates: ${d.candidates}`);
   if (d.finishReason) lines.push(`finishReason: ${d.finishReason}`);
-  if (d.blockReason) lines.push(`blockReason: ${d.blockReason}`);
-  if (d.modelVersion) lines.push(`modelVersion: ${d.modelVersion}`);
   if (d.cacheSource) lines.push(`cacheSource: ${d.cacheSource}`);
   if (res?.cacheKey) lines.push(`cacheKey: ${res.cacheKey}`);
   if (d.latencyMs) lines.push(`latencyMs: ${d.latencyMs}`);
-  if (d.usage) lines.push(`usage: ${JSON.stringify(d.usage)}`);
 
   return lines.join("\n") || "(no diagnostics)";
 }
@@ -57,15 +131,15 @@ async function onSave() {
   try {
     const v = (els.apiKeyInput.value || "").trim();
     if (!v) {
-      setMessage("Collez une clé API Gemini valide, puis cliquez sur Save.", "warn");
+      setMessage("Collez une clé API Gemini valide.", "warn");
       return;
     }
     await setApiKey(v);
     els.apiKeyInput.value = "";
-    setMessage("Clé API sauvegardée localement (masquée).", "ok");
+    setMessage("Clé API sauvegardée.", "ok");
     await refreshKeyStatus();
   } catch (e) {
-    setMessage("Impossible de sauvegarder la clé. Voir console.", "error");
+    setMessage("Erreur sauvegarde.", "error");
     console.error(e);
   }
 }
@@ -77,13 +151,12 @@ async function onClear() {
     setMessage("Clé supprimée.", "ok");
     await refreshKeyStatus();
   } catch (e) {
-    setMessage("Impossible de supprimer la clé. Voir console.", "error");
     console.error(e);
   }
 }
 
 async function onTest() {
-  setMessage("Test API en cours…", "info");
+  setMessage("Test en cours...", "info");
   setTestDiagnostics("");
   try {
     const res = await geminiMinimalTest({ timeoutMs: 10000 });
@@ -91,24 +164,16 @@ async function onTest() {
       setMessage("Test API : OK", "ok");
       setTestDiagnostics(formatTestDiagnostics(res));
     } else {
-      setMessage(`Test API : ${res.code} (${res.message || "erreur"})`, "error");
+      setMessage(`Erreur : ${res.code}`, "error");
       setTestDiagnostics(formatTestDiagnostics(res));
     }
+    // Update logs after test
+    updateLogsUI();
   } catch (e) {
-    setMessage("Test API : erreur inattendue. Voir console.", "error");
-    console.error(e);
-    setTestDiagnostics(e?.message || "unexpected error");
+    setMessage("Erreur inattendue", "error");
+    setTestDiagnostics(e?.message);
   } finally {
     await refreshKeyStatus();
-  }
-}
-
-function refreshDiagnostics() {
-  try {
-    const snap = getDiagnosticsSnapshot();
-    els.diag.textContent = formatDiagnosticsForUi(snap);
-  } catch {
-    // ignore
   }
 }
 
@@ -121,22 +186,39 @@ function wireUi() {
     keyStatus: $("keyStatus"),
     backend: $("backend"),
     message: $("message"),
-    diag: $("diag"),
-    testDiag: $("testDiagnostics")
+    testDiag: $("testDiagnostics"),
+    // Logs UI
+    totalTokens: $("totalTokens"),
+    estCost: $("estCost"),
+    logList: $("logList"),
+    refreshLogsBtn: $("refreshLogsBtn")
   };
 
   els.saveBtn.addEventListener("click", onSave);
   els.clearBtn.addEventListener("click", onClear);
   els.testBtn.addEventListener("click", onTest);
+  
+  if(els.refreshLogsBtn) {
+    els.refreshLogsBtn.addEventListener("click", updateLogsUI);
+  }
 
   els.apiKeyInput.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter") onSave();
   });
+
+  initTabs();
 }
 
 Office.onReady(async () => {
   wireUi();
   await refreshKeyStatus();
-  refreshDiagnostics();
-  setInterval(refreshDiagnostics, 1500);
+  updateLogsUI();
+  
+  // Auto-refresh logs if tab is active
+  setInterval(() => {
+    const logsTab = document.getElementById('logs');
+    if(logsTab && logsTab.classList.contains('active')) {
+      updateLogsUI();
+    }
+  }, 4000);
 });

@@ -1,3 +1,10 @@
+// src/shared/diagnostics.js
+
+// Tarifs approximatifs Gemini 1.5 Flash (par million de tokens)
+// Input: $0.10 / 1M | Output: $0.40 / 1M
+const COST_INPUT_1M = 0.10;
+const COST_OUTPUT_1M = 0.40;
+
 function getGlobalState() {
   if (typeof window === "undefined") return {};
   window.__AI_ADDIN_STATE__ = window.__AI_ADDIN_STATE__ || {};
@@ -11,6 +18,7 @@ function initDiagnostics() {
   state.diagnostics = {
     startedAt: new Date().toISOString(),
     backend: "",
+    // Compteurs globaux
     requests: 0,
     success: 0,
     failures: 0,
@@ -18,16 +26,23 @@ function initDiagnostics() {
     cacheHits: 0,
     cacheMisses: 0,
     dedupHits: 0,
+    
+    // Stats Tokens & Coûts
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    estimatedCostUSD: 0,
+    
+    // Derniers états
     lastRequestAt: "",
     lastSuccessAt: "",
     lastErrorAt: "",
     lastErrorCode: "",
     lastErrorMessage: "",
-    lastHttpStatus: 0,
     lastModel: "",
     lastLatencyMs: 0,
-    lastCacheKey: "",
-    events: []
+    
+    // Logs détaillés (les 50 derniers)
+    logs: [] 
   };
 }
 initDiagnostics();
@@ -39,26 +54,56 @@ export function diagError(code, message, httpStatus = 0) {
   state.diagnostics.lastErrorAt = new Date().toISOString();
   state.diagnostics.lastErrorCode = code || "";
   state.diagnostics.lastErrorMessage = message || "";
-  state.diagnostics.lastHttpStatus = httpStatus || 0;
   diagInc("failures", 1);
-  pushEvent("error", { code, message, httpStatus });
+  // On loggue aussi l'erreur dans l'historique détaillé
+  diagTrackRequest({ success: false, code, message, httpStatus });
 }
 
 export function diagSuccess({ model, latencyMs, cacheKey, cached } = {}) {
   state.diagnostics.lastSuccessAt = new Date().toISOString();
   state.diagnostics.lastModel = model || state.diagnostics.lastModel;
   state.diagnostics.lastLatencyMs = Number.isFinite(latencyMs) ? latencyMs : state.diagnostics.lastLatencyMs;
-  state.diagnostics.lastCacheKey = cacheKey || state.diagnostics.lastCacheKey;
   diagInc("success", 1);
-  pushEvent("success", { model, latencyMs, cached: !!cached });
 }
 
-export function pushEvent(kind, payload) {
-  const ev = { at: new Date().toISOString(), kind, payload: payload || {} };
-  state.diagnostics.events.push(ev);
-  if (state.diagnostics.events.length > 20) {
-    state.diagnostics.events.splice(0, state.diagnostics.events.length - 20);
+/**
+ * Enregistre une requête terminée dans l'historique et met à jour les coûts.
+ */
+export function diagTrackRequest({ success, code, message, usage, latencyMs, model, cached, httpStatus }) {
+  // Mise à jour des compteurs basiques si pas déjà fait par diagSuccess/diagError
+  // (Note: diagSuccess/Error incrémentent déjà success/failures, ici on gère logs et coûts)
+
+  // Calcul Tokens & Coûts (uniquement si pas en cache)
+  const input = usage?.promptTokenCount || 0;
+  const output = usage?.candidatesTokenCount || 0;
+  
+  if (!cached && success) {
+    state.diagnostics.totalInputTokens = (state.diagnostics.totalInputTokens || 0) + input;
+    state.diagnostics.totalOutputTokens = (state.diagnostics.totalOutputTokens || 0) + output;
+    
+    const cost = (input / 1_000_000 * COST_INPUT_1M) + (output / 1_000_000 * COST_OUTPUT_1M);
+    state.diagnostics.estimatedCostUSD = (state.diagnostics.estimatedCostUSD || 0) + cost;
   }
+
+  // Création de l'entrée de log
+  const entry = {
+    id: Date.now().toString(36) + Math.random().toString(36).substr(2, 5),
+    at: new Date().toISOString(),
+    success,
+    code: code || (success ? "OK" : "ERR"),
+    message: message || "",
+    model: model || "?",
+    latencyMs: latencyMs || 0,
+    inputTokens: input,
+    outputTokens: output,
+    cached: !!cached,
+    httpStatus: httpStatus || 0
+  };
+
+  // Gestion du buffer circulaire (50 derniers logs)
+  if (!state.diagnostics.logs) state.diagnostics.logs = [];
+  state.diagnostics.logs.unshift(entry);
+  if (state.diagnostics.logs.length > 50) state.diagnostics.logs.pop();
 }
 
 export function getDiagnosticsSnapshot() {
@@ -66,26 +111,9 @@ export function getDiagnosticsSnapshot() {
 }
 
 export function formatDiagnosticsForUi(snapshot) {
+  // Gardé pour compatibilité, mais l'UI utilise maintenant getDiagnosticsSnapshot directement
   if (!snapshot) return "";
-  const lines = [];
-  lines.push(`Started: ${snapshot.startedAt || ""}`);
-  if (snapshot.backend) lines.push(`Storage backend: ${snapshot.backend}`);
-  lines.push(`Requests: ${snapshot.requests || 0} (ok: ${snapshot.success || 0}, fail: ${snapshot.failures || 0})`);
-  lines.push(`Cache: hits ${snapshot.cacheHits || 0}, misses ${snapshot.cacheMisses || 0}, dedup ${snapshot.dedupHits || 0}`);
-  lines.push(`Retries: ${snapshot.retries || 0}`);
-  if (snapshot.lastRequestAt) lines.push(`Last request: ${snapshot.lastRequestAt} (model: ${snapshot.lastModel || "?"}, ${snapshot.lastLatencyMs || 0} ms)`);
-  if (snapshot.lastErrorAt) {
-    lines.push(`Last error: ${snapshot.lastErrorAt}`);
-    lines.push(`  ${snapshot.lastErrorCode || ""}${snapshot.lastHttpStatus ? " (HTTP " + snapshot.lastHttpStatus + ")" : ""}`);
-    if (snapshot.lastErrorMessage) lines.push(`  ${snapshot.lastErrorMessage}`);
-  }
-  if (Array.isArray(snapshot.events) && snapshot.events.length) {
-    lines.push(`Events (last ${Math.min(20, snapshot.events.length)}):`);
-    for (const e of snapshot.events.slice(-10)) {
-      lines.push(`  - ${e.at} ${e.kind}${e.payload?.cached ? " [cached]" : ""}`);
-    }
-  }
-  return lines.join("\n");
+  return `Requests: ${snapshot.requests} | Cost: $${(snapshot.estimatedCostUSD || 0).toFixed(4)}`;
 }
 
 export function getSharedState() {
