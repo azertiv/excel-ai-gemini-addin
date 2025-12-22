@@ -34,7 +34,7 @@
   </Requirements>
 
   <DefaultSettings>
-    <SourceLocation DefaultValue="https://localhost:3000/taskpane.html"/>
+    <SourceLocation DefaultValue="https://azertiv.github.io/excel-ai-gemini-addin/taskpane.html"/>
   </DefaultSettings>
 
   <Permissions>ReadWriteDocument</Permissions>
@@ -108,9 +108,9 @@
       </bt:Images>
 
       <bt:Urls>
-        <bt:Url id="Taskpane.Url" DefaultValue="https://localhost:3000/taskpane.html"/>
-        <bt:Url id="Functions.Script.Url" DefaultValue="https://localhost:3000/functions.js"/>
-        <bt:Url id="Functions.Metadata.Url" DefaultValue="https://localhost:3000/functions.json"/>
+        <bt:Url id="Taskpane.Url" DefaultValue="https://azertiv.github.io/excel-ai-gemini-addin/taskpane.html"/>
+        <bt:Url id="Functions.Script.Url" DefaultValue="https://azertiv.github.io/excel-ai-gemini-addin/functions.js"/>
+        <bt:Url id="Functions.Metadata.Url" DefaultValue="https://azertiv.github.io/excel-ai-gemini-addin/functions.json"/>
       </bt:Urls>
 
       <bt:ShortStrings>
