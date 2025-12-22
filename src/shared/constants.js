@@ -11,7 +11,7 @@ export const GEMINI = {
 export const LIMITS = {
   MAX_CONTEXT_CHARS: 3500,
   MAX_INPUT_CHARS: 12000,
-  MAX_CELL_CHARS: 8000,
+  MAX_CELL_CHARS: 32000,
 
   MAX_TABLE_ROWS: 50,
   MAX_TABLE_COLS: 12,
@@ -32,7 +32,7 @@ export const DEFAULTS = {
   cache: "memory",
   cacheTtlSec: 3600,
   temperature: 0.2,
-  maxTokens: 256
+  maxTokens: 2048
 };
 
 export const ERR = {
