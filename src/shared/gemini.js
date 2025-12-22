@@ -90,14 +90,17 @@ async function fetchWithTimeout(url, fetchOptions, timeoutMs) {
 
 function extractCandidateText(json) {
   const candidates = json?.candidates;
-  if (!Array.isArray(candidates) || candidates.length === 0) return "";
+  if (!Array.isArray(candidates) || candidates.length === 0) return { text: "", candidatesCount: 0 };
 
-  const content = candidates[0]?.content;
+  const first = candidates[0];
+  const content = first?.content;
   const parts = Array.isArray(content)
     ? content.flatMap((c) => (Array.isArray(c?.parts) ? c.parts : [])).filter(Boolean)
     : (Array.isArray(content?.parts) ? content.parts : []);
 
-  if (!Array.isArray(parts) || parts.length === 0) return "";
+  if (!Array.isArray(parts) || parts.length === 0) {
+    return { text: "", candidatesCount: candidates.length, finishReason: first?.finishReason };
+  }
 
   const rendered = parts
     .map((p) => {
@@ -114,7 +117,7 @@ function extractCandidateText(json) {
     .filter(Boolean)
     .join("\n");
 
-  return rendered;
+  return { text: rendered, candidatesCount: candidates.length, finishReason: first?.finishReason };
 }
 
 function isBlockedResponse(json) {
@@ -122,6 +125,23 @@ function isBlockedResponse(json) {
   const finish = json?.candidates?.[0]?.finishReason;
   if (finish && String(finish).toUpperCase().includes("SAFETY")) return true;
   return false;
+}
+
+function buildDiagnostics({ json, status = 0, latencyMs = 0, cacheKey }) {
+  const candidates = Array.isArray(json?.candidates) ? json.candidates.length : 0;
+  const diag = {
+    httpStatus: status,
+    candidates,
+    finishReason: json?.candidates?.[0]?.finishReason,
+    blockReason: json?.promptFeedback?.blockReason,
+    safety: json?.candidates?.[0]?.safetyRatings,
+    modelVersion: json?.modelVersion,
+    usage: json?.usageMetadata,
+    cacheKey,
+    latencyMs
+  };
+
+  return diag;
 }
 
 async function loadPersistIndex() {
@@ -230,7 +250,14 @@ export async function geminiGenerate(req) {
     if (typeof cached === "string") {
       diagInc("cacheHits", 1);
       diagSuccess({ model, latencyMs: Date.now() - started, cacheKey, cached: true });
-      return { ok: true, text: cached, cached: true, cacheKey, latencyMs: Date.now() - started };
+      return {
+        ok: true,
+        text: cached,
+        cached: true,
+        cacheKey,
+        latencyMs: Date.now() - started,
+        diagnostics: { cacheKey, cached: true, cacheSource: "memory" }
+      };
     }
     diagInc("cacheMisses", 1);
   }
@@ -241,7 +268,14 @@ export async function geminiGenerate(req) {
       diagInc("cacheHits", 1);
       ST.memCache.set(cacheKey, pv);
       diagSuccess({ model, latencyMs: Date.now() - started, cacheKey, cached: true });
-      return { ok: true, text: pv, cached: true, cacheKey, latencyMs: Date.now() - started };
+      return {
+        ok: true,
+        text: pv,
+        cached: true,
+        cacheKey,
+        latencyMs: Date.now() - started,
+        diagnostics: { cacheKey, cached: true, cacheSource: "persistent" }
+      };
     }
   }
 
@@ -278,8 +312,9 @@ export async function geminiGenerate(req) {
           if (!resp || !resp.ok) {
             const status = resp?.status || 0;
             let msg = `HTTP ${status}`;
+            let errJson = null;
             try {
-              const errJson = await resp.json();
+              errJson = await resp.json();
               msg = errJson?.error?.message || msg;
             } catch { /* ignore */ }
 
@@ -290,33 +325,39 @@ export async function geminiGenerate(req) {
               continue;
             }
 
+            const diagnostics = buildDiagnostics({ json: errJson || {}, status, cacheKey, latencyMs: Date.now() - attemptStart });
             diagError(code, msg, status);
-            return { ok: false, code, message: msg, httpStatus: status };
+            return { ok: false, code, errorCode: code, message: msg, httpStatus: status, diagnostics };
           }
 
           const json = await resp.json();
+          const diagnostics = buildDiagnostics({ json, status: resp.status, cacheKey, latencyMs: Date.now() - attemptStart });
 
           if (isBlockedResponse(json)) {
-            diagError(ERR.BLOCKED, "Blocked by safety settings", resp.status);
-            return { ok: false, code: ERR.BLOCKED, message: "Blocked by safety settings", httpStatus: resp.status };
+            const msg = diagnostics.blockReason ? `Blocked: ${diagnostics.blockReason}` : "Blocked by safety settings";
+            diagError(ERR.BLOCKED, msg, resp.status);
+            return { ok: false, code: ERR.BLOCKED, errorCode: ERR.BLOCKED, message: msg, httpStatus: resp.status, diagnostics };
           }
 
-          let text = extractCandidateText(json);
-          text = typeof text === "string" ? text : "";
+          const { text, candidatesCount, finishReason } = extractCandidateText(json);
+          const normalizedText = typeof text === "string" ? text : "";
 
-          if (!text.trim()) {
-            diagError(ERR.EMPTY_RESPONSE, "Empty response", resp.status);
-            return { ok: false, code: ERR.EMPTY_RESPONSE, message: "Empty response", httpStatus: resp.status };
+          if (!normalizedText.trim()) {
+            const msg = candidatesCount === 0
+              ? "Empty response (no candidates)"
+              : `Empty response (finish: ${finishReason || "unknown"})`;
+            diagError(ERR.EMPTY_RESPONSE, msg, resp.status);
+            return { ok: false, code: ERR.EMPTY_RESPONSE, errorCode: ERR.EMPTY_RESPONSE, message: msg, httpStatus: resp.status, diagnostics };
           }
 
-          text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
-          if (text.length > LIMITS.MAX_CELL_CHARS) text = text.slice(0, LIMITS.MAX_CELL_CHARS) + "\n…(truncated)";
+          let cleaned = normalizedText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+          if (cleaned.length > LIMITS.MAX_CELL_CHARS) cleaned = cleaned.slice(0, LIMITS.MAX_CELL_CHARS) + "\n…(truncated)";
 
-          if (cacheMode !== "none") ST.memCache.set(cacheKey, text);
-          if (cacheMode === "persistent") await persistSet(cacheKey, text);
+          if (cacheMode !== "none") ST.memCache.set(cacheKey, cleaned);
+          if (cacheMode === "persistent") await persistSet(cacheKey, cleaned);
 
           diagSuccess({ model, latencyMs: Date.now() - attemptStart, cacheKey, cached: false });
-          return { ok: true, text, cached: false, cacheKey, latencyMs: Date.now() - attemptStart };
+          return { ok: true, text: cleaned, cached: false, cacheKey, latencyMs: Date.now() - attemptStart, diagnostics };
         } catch (e) {
           const msg = (e?.name === "AbortError" || e?.message === "timeout") ? "Timeout" : (e?.message || "Network error");
           const code = msg === "Timeout" ? ERR.TIMEOUT : ERR.API_ERROR;
@@ -326,13 +367,15 @@ export async function geminiGenerate(req) {
             continue;
           }
 
+          const diagnostics = buildDiagnostics({ json: {}, status: 0, cacheKey, latencyMs: Date.now() - attemptStart });
           diagError(code, msg, 0);
-          return { ok: false, code, message: msg, httpStatus: 0 };
+          return { ok: false, code, errorCode: code, message: msg, httpStatus: 0, diagnostics };
         }
       }
 
+      const diagnostics = buildDiagnostics({ json: {}, status: 0, cacheKey, latencyMs: Date.now() - started });
       diagError(ERR.API_ERROR, "Unknown error", 0);
-      return { ok: false, code: ERR.API_ERROR, message: "Unknown error", httpStatus: 0 };
+      return { ok: false, code: ERR.API_ERROR, errorCode: ERR.API_ERROR, message: "Unknown error", httpStatus: 0, diagnostics };
     } finally {
       release();
     }
@@ -356,5 +399,5 @@ export async function geminiMinimalTest(options = {}) {
   });
 
   if (!res.ok) return res;
-  return { ok: true, text: "OK" };
+  return { ok: true, text: "OK", diagnostics: res.diagnostics };
 }
