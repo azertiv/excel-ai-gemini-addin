@@ -13,7 +13,7 @@
     .tab { padding: 8px 16px; font-weight: 600; font-size: 13px; color: #666; transition: color 0.2s; }
     .tab:hover { color: #333; }
     .tab.active { color: #0f6cbd; border-bottom: 2px solid #0f6cbd; }
-    
+
     .tab-content { display: none; }
     .tab-content.active { display: block; animation: fadeIn 0.3s; }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -23,28 +23,28 @@
     .stat-val { font-size: 16px; font-weight: 700; color: #005a9e; }
     .stat-lbl { font-size: 10px; color: #555; text-transform: uppercase; margin-top: 2px; }
 
-    .log-list { 
-        font-family: "Consolas", monospace; font-size: 11px; 
-        max-height: 350px; overflow-y: auto; 
+    .log-list {
+        font-family: "Consolas", monospace; font-size: 11px;
+        max-height: 350px; overflow-y: auto;
         border: 1px solid #eee; border-radius: 6px; background: #fff;
     }
-    .log-item { 
-        display: grid; grid-template-columns: 45px 1fr 70px; 
-        padding: 8px; border-bottom: 1px solid #f3f3f3; 
+    .log-item {
+        display: grid; grid-template-columns: 45px 1fr 70px;
+        padding: 8px; border-bottom: 1px solid #f3f3f3;
         align-items: center; gap: 6px;
     }
     .log-item:last-child { border-bottom: none; }
     .log-item.err .log-main { color: #a4262c; }
     .log-item.err .log-time { color: #a4262c; font-weight: bold; }
-    
+
     .log-time { font-size: 10px; color: #888; }
     .log-main { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
     .log-code { font-size: 10px; background: #eee; padding: 1px 4px; border-radius: 3px; margin-left: 4px; color: #333; }
     .log-meta { text-align: right; font-size: 9px; color: #888; display: flex; flex-direction: column; }
-    
+
     .badge { display: inline-block; padding: 2px 5px; border-radius: 4px; font-size: 9px; font-weight: bold; }
     .badge.cached { background: #dff6dd; color: #107c10; border: 1px solid #bce2be; }
-    
+
     .refresh-btn { width: 100%; margin-top: 8px; padding: 6px; font-size: 12px; }
   </style>
 </head>
@@ -52,7 +52,7 @@
 <body>
   <div class="container">
     <h1>AI Functions (Gemini)</h1>
-    
+
     <div class="tabs">
       <div class="tab active" data-target="settings">Configuration</div>
       <div class="tab" data-target="logs">Logs & Coûts</div>
@@ -68,6 +68,11 @@
             <div class="row">
                 <label for="apiKeyInput">Gemini API Key</label>
                 <input id="apiKeyInput" type="password" placeholder="Collez la clé API ici" autocomplete="off" />
+            </div>
+
+            <div class="row" style="margin-top:10px;">
+                <label for="maxTokensInput">Max Tokens (défaut 2048)</label>
+                <input id="maxTokensInput" type="number" placeholder="ex: 2048" />
             </div>
 
             <div class="buttons">
@@ -86,10 +91,19 @@
         </div>
 
         <div class="card">
-            <h2>Exemples</h2>
-            <pre class="mono example">=AI.TABLE("Liste les pays de l'UE et leur capitale")
-=AI.ASK("Explique la physique quantique",, "{""maxTokens"":1000}")
-=AI.EXTRACT(A2, "nom,email,tel")</pre>
+            <h2 id="featuresHeader" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center;">
+                Features <span id="featuresToggle">▼</span>
+            </h2>
+            <div id="featuresContent" style="display:none;">
+                <p><strong>=AI.ASK(prompt, [context], [options])</strong><br>Pose une question libre.</p>
+                <p><strong>=AI.TABLE(prompt, [context], [options])</strong><br>Génère un tableau de données.</p>
+                <p><strong>=AI.EXTRACT(cell, schema, [options])</strong><br>Extrait des champs JSON.</p>
+                <p><strong>=AI.FILL(examples, target, instr, [options])</strong><br>Remplit par l'exemple.</p>
+                <p><strong>=AI.SUMMARIZE(text, [options])</strong><br>Résume un texte.</p>
+                <p><strong>=AI.TRANSLATE(text, lang, [options])</strong><br>Traduit un texte.</p>
+                <p><strong>=AI.CLASSIFY(text, labels, [options])</strong><br>Classifie un texte.</p>
+                <p><strong>=AI.CLEAN(text, [options])</strong><br>Nettoie le texte.</p>
+            </div>
         </div>
     </div>
 
@@ -106,11 +120,11 @@
                     <div class="stat-lbl">Coût Estimé</div>
                 </div>
             </div>
-            
+
             <div class="log-list" id="logList">
                 <div style="padding:15px; text-align:center; color:#999; font-style:italic;">Aucune requête récente</div>
             </div>
-            
+
             <button id="refreshLogsBtn" class="refresh-btn">Rafraîchir les logs</button>
         </div>
     </div>

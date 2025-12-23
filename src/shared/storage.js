@@ -100,3 +100,39 @@ export async function clearApiKey() {
   await removeItem(STORAGE.API_KEY);
   return true;
 }
+
+let _maxTokensLoaded = false;
+let _maxTokensValue = null;
+let _maxTokensLoadPromise = null;
+
+export async function getMaxTokens() {
+  if (_maxTokensLoaded) return _maxTokensValue;
+  if (_maxTokensLoadPromise) return await _maxTokensLoadPromise;
+
+  _maxTokensLoadPromise = (async () => {
+    const v = await getItem(STORAGE.MAX_TOKENS);
+    const n = Number(v);
+    _maxTokensValue = Number.isFinite(n) && n > 0 ? n : null;
+    _maxTokensLoaded = true;
+    return _maxTokensValue;
+  })();
+
+  return await _maxTokensLoadPromise;
+}
+
+export async function setMaxTokens(val) {
+  const n = Number(val);
+  const valid = Number.isFinite(n) && n > 0;
+
+  if (valid) {
+    _maxTokensValue = n;
+    await setItem(STORAGE.MAX_TOKENS, String(n));
+  } else {
+    _maxTokensValue = null;
+    await removeItem(STORAGE.MAX_TOKENS);
+  }
+
+  _maxTokensLoaded = true;
+  _maxTokensLoadPromise = null;
+  return true;
+}

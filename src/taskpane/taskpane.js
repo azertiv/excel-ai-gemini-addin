@@ -1,6 +1,6 @@
 // src/taskpane/taskpane.js
 
-import { getApiKey, setApiKey, clearApiKey, storageBackend } from "../shared/storage";
+import { getApiKey, setApiKey, clearApiKey, getMaxTokens, setMaxTokens, storageBackend } from "../shared/storage";
 import { geminiMinimalTest } from "../shared/gemini";
 import { getDiagnosticsSnapshot } from "../shared/diagnostics";
 
@@ -15,7 +15,7 @@ function initTabs() {
       // Switch active tab
       document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(x => x.classList.remove('active'));
-      
+
       t.classList.add('active');
       const targetId = t.dataset.target;
       document.getElementById(targetId).classList.add('active');
@@ -36,11 +36,11 @@ function formatTime(iso) {
 function updateLogsUI() {
   try {
     const snap = getDiagnosticsSnapshot();
-    
+
     // 1. Stats
     const total = (snap.totalInputTokens || 0) + (snap.totalOutputTokens || 0);
     const cost = (snap.estimatedCostUSD || 0);
-    
+
     if (els.totalTokens) els.totalTokens.textContent = total.toLocaleString();
     if (els.estCost) els.estCost.textContent = '$' + cost.toFixed(5);
 
@@ -58,17 +58,17 @@ function updateLogsUI() {
       const isErr = !log.success;
       const cacheBadge = log.cached ? '<span class="badge cached">CACHE</span>' : '';
       const tokensInfo = log.cached ? '-' : `${log.inputTokens} &rarr; ${log.outputTokens}`;
-      
+
       html += `
         <div class="log-item ${isErr ? 'err' : ''}">
           <div class="log-time">${formatTime(log.at)}</div>
-          
+
           <div class="log-main">
              ${cacheBadge}
              <span title="${log.model}">${log.model}</span>
              <span class="log-code">${log.code}</span>
           </div>
-          
+
           <div class="log-meta">
              <div>${tokensInfo}</div>
              <div>${log.latencyMs}ms</div>
@@ -111,10 +111,15 @@ function formatTestDiagnostics(res) {
 
 async function refreshKeyStatus() {
   const key = (await getApiKey()) || "";
+  const maxTokens = await getMaxTokens();
   const backend = await storageBackend();
 
   els.keyStatus.textContent = key ? "OK" : "MISSING";
   els.keyStatus.className = key ? "status ok" : "status missing";
+
+  if (els.maxTokensInput) {
+    els.maxTokensInput.value = maxTokens || "";
+  }
 
   els.backend.textContent =
     backend === "office" ? "OfficeRuntime.storage" :
@@ -130,13 +135,22 @@ function setMessage(msg, kind = "info") {
 async function onSave() {
   try {
     const v = (els.apiKeyInput.value || "").trim();
-    if (!v) {
-      setMessage("Collez une clé API Gemini valide.", "warn");
-      return;
+    const t = (els.maxTokensInput.value || "").trim();
+
+    if (v) {
+      await setApiKey(v);
+      els.apiKeyInput.value = "";
+    } else {
+        const currentKey = await getApiKey();
+        if (!currentKey) {
+             setMessage("Collez une clé API Gemini valide.", "warn");
+             return;
+        }
     }
-    await setApiKey(v);
-    els.apiKeyInput.value = "";
-    setMessage("Clé API sauvegardée.", "ok");
+
+    await setMaxTokens(t);
+
+    setMessage("Configuration sauvegardée.", "ok");
     await refreshKeyStatus();
   } catch (e) {
     setMessage("Erreur sauvegarde.", "error");
@@ -180,6 +194,7 @@ async function onTest() {
 function wireUi() {
   els = {
     apiKeyInput: $("apiKeyInput"),
+    maxTokensInput: $("maxTokensInput"),
     saveBtn: $("saveKeyBtn"),
     clearBtn: $("clearKeyBtn"),
     testBtn: $("testBtn"),
@@ -191,13 +206,17 @@ function wireUi() {
     totalTokens: $("totalTokens"),
     estCost: $("estCost"),
     logList: $("logList"),
-    refreshLogsBtn: $("refreshLogsBtn")
+    refreshLogsBtn: $("refreshLogsBtn"),
+    // Features UI
+    featuresHeader: $("featuresHeader"),
+    featuresContent: $("featuresContent"),
+    featuresToggle: $("featuresToggle")
   };
 
   els.saveBtn.addEventListener("click", onSave);
   els.clearBtn.addEventListener("click", onClear);
   els.testBtn.addEventListener("click", onTest);
-  
+
   if(els.refreshLogsBtn) {
     els.refreshLogsBtn.addEventListener("click", updateLogsUI);
   }
@@ -206,6 +225,21 @@ function wireUi() {
     if (ev.key === "Enter") onSave();
   });
 
+  if (els.maxTokensInput) {
+    els.maxTokensInput.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") onSave();
+    });
+  }
+
+  // Features toggle
+  if (els.featuresHeader) {
+    els.featuresHeader.addEventListener("click", () => {
+        const isHidden = els.featuresContent.style.display === "none";
+        els.featuresContent.style.display = isHidden ? "block" : "none";
+        els.featuresToggle.textContent = isHidden ? "▲" : "▼";
+    });
+  }
+
   initTabs();
 }
 
@@ -213,7 +247,7 @@ Office.onReady(async () => {
   wireUi();
   await refreshKeyStatus();
   updateLogsUI();
-  
+
   // Auto-refresh logs if tab is active
   setInterval(() => {
     const logsTab = document.getElementById('logs');
