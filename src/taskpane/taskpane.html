@@ -25,25 +25,63 @@
 
     .log-list {
         font-family: "Consolas", monospace; font-size: 11px;
-        max-height: 350px; overflow-y: auto;
+        max-height: 400px; overflow-y: auto;
         border: 1px solid #eee; border-radius: 6px; background: #fff;
     }
     .log-item {
-        display: grid; grid-template-columns: 45px 1fr 70px;
         padding: 8px; border-bottom: 1px solid #f3f3f3;
-        align-items: center; gap: 6px;
+        display: flex; flex-direction: column; gap: 4px;
     }
     .log-item:last-child { border-bottom: none; }
-    .log-item.err .log-main { color: #a4262c; }
-    .log-item.err .log-time { color: #a4262c; font-weight: bold; }
+    .log-item.err { background-color: #fff0f0; }
 
-    .log-time { font-size: 10px; color: #888; }
-    .log-main { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-    .log-code { font-size: 10px; background: #eee; padding: 1px 4px; border-radius: 3px; margin-left: 4px; color: #333; }
-    .log-meta { text-align: right; font-size: 9px; color: #888; display: flex; flex-direction: column; }
+    /* Layout interne d'un log */
+    .log-row-top {
+        display: flex; justify-content: space-between; align-items: center;
+    }
+    .log-row-details {
+        display: flex; justify-content: space-between; align-items: flex-start;
+        font-size: 10px; color: #666;
+    }
 
-    .badge { display: inline-block; padding: 2px 5px; border-radius: 4px; font-size: 9px; font-weight: bold; }
+    /* Token Badge */
+    .token-badge {
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        min-width: 50px; padding: 4px 6px; border-radius: 4px;
+        font-weight: bold; font-size: 12px; color: white;
+        text-align: center;
+    }
+    .token-badge.low { background-color: #4caf50; }     /* Vert */
+    .token-badge.medium { background-color: #ff9800; }  /* Orange */
+    .token-badge.high { background-color: #f44336; }    /* Rouge */
+
+    .token-details {
+        font-size: 9px; font-weight: normal; opacity: 0.9; margin-top: 2px;
+    }
+
+    /* Main Info */
+    .log-info { flex: 1; margin-left: 10px; }
+    .log-func { font-weight: bold; font-size: 13px; color: #333; }
+    .log-time { font-size: 10px; color: #999; margin-left: 5px; }
+    .log-model { font-size: 10px; color: #888; margin-top: 2px; }
+
+    /* Status & Latency */
+    .log-status { text-align: right; min-width: 60px; font-size: 10px; }
+    .log-latency { color: #666; }
+    .badge { display: inline-block; padding: 1px 4px; border-radius: 3px; font-size: 9px; margin-top: 2px; }
     .badge.cached { background: #dff6dd; color: #107c10; border: 1px solid #bce2be; }
+    .badge.err { background: #fde7e9; color: #a4262c; border: 1px solid #fde7e9; }
+
+    /* Code Expandable */
+    .log-code-toggle {
+        font-size: 10px; color: #0078d4; cursor: pointer; text-decoration: underline; margin-top: 2px;
+        display: inline-block;
+    }
+    .log-full-code {
+        display: none;
+        margin-top: 6px; background: #fafafa; border: 1px solid #eee; padding: 6px;
+        border-radius: 4px; white-space: pre-wrap; word-break: break-all; color: #444; font-size: 10px;
+    }
 
     .refresh-btn { width: 100%; margin-top: 8px; padding: 6px; font-size: 12px; }
   </style>

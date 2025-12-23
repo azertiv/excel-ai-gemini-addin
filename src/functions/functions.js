@@ -226,7 +226,7 @@ function sysFormula(lang) {
 
 // ---------- core call wrapper ----------
 
-async function callGemini({ system, user, options }) {
+async function callGemini({ system, user, options, functionName }) {
   const opt = options || {};
   const temperature = typeof opt.temperature === "number" ? clamp(opt.temperature, 0, 1, DEFAULTS.temperature) : DEFAULTS.temperature;
   const maxTokens = typeof opt.maxTokens === "number" ? clamp(opt.maxTokens, 1, 8192, DEFAULTS.maxTokens) : DEFAULTS.maxTokens;
@@ -246,7 +246,8 @@ async function callGemini({ system, user, options }) {
     cacheTtlSec,
     timeoutMs,
     retry,
-    responseMimeType: opt.responseMimeType // Support de l'option JSON
+    responseMimeType: opt.responseMimeType, // Support de l'option JSON
+    functionName: functionName
   });
 
   return res;
@@ -286,7 +287,8 @@ export async function ASK(prompt, contextRange, options) {
     const res = await callGemini({
       system: sysAsk(lang),
       user,
-      options: opt
+      options: opt,
+      functionName: "AI.ASK"
     });
 
     if (!res.ok) return errorCode(res.code);
@@ -303,7 +305,8 @@ export async function TRANSLATE(text, targetLang, options) {
     const res = await callGemini({
       system: sysTranslate(lang),
       user: normalizeNewlines(coerceToTextOrJoin2D(text)),
-      options: opt
+      options: opt,
+      functionName: "AI.TRANSLATE"
     });
     if (!res.ok) return errorCode(res.code);
     return truncateForCell(res.text);
@@ -329,7 +332,7 @@ export async function CLASSIFY(text, labels, options) {
       `Return only one label. If confidence < ${threshold}, return UNKNOWN.`
     ].join("\n");
 
-    const res = await callGemini({ system, user, options: opt });
+    const res = await callGemini({ system, user, options: opt, functionName: "AI.CLASSIFY" });
     if (!res.ok) return errorCode(res.code);
 
     const out = normalizeNewlines(res.text).trim();
@@ -364,7 +367,8 @@ export async function CLEAN(text, options) {
     const res = await callGemini({
       system: sysClean(lang),
       user: raw,
-      options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 }
+      options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 },
+      functionName: "AI.CLEAN"
     });
 
     if (!res.ok) return errorCode(res.code);
@@ -384,7 +388,8 @@ export async function SUMMARIZE(textOrRange, options) {
     const res = await callGemini({
       system: sysSummarize(lang),
       user: raw,
-      options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.2 }
+      options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.2 },
+      functionName: "AI.SUMMARIZE"
     });
 
     if (!res.ok) return errorCode(res.code);
@@ -409,11 +414,8 @@ export async function EXTRACT(instruction, textOrRange, options) {
     const res = await callGemini({
       system: sysExtract(instr, lang),
       user: raw,
-      options: {
-        ...opt,
-        temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0,
-        responseMimeType: "application/json"
-      }
+      options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 },
+      functionName: "AI.EXTRACT"
     });
 
     if (!res.ok) return errorCode(res.code);
@@ -471,7 +473,8 @@ export async function TABLE(prompt, contextRange, options) {
         ...opt,
         temperature: typeof opt.temperature === "number" ? opt.temperature : 0.1,
         responseMimeType: "application/json"
-      }
+      },
+      functionName: "AI.TABLE"
     });
 
     if (!res.ok) return errorCode(res.code);
@@ -536,7 +539,8 @@ export async function FILL(exampleRange, targetRange, instruction, options) {
     const res = await callGemini({
       system: sysFill(lang, rowsToFill),
       user,
-      options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 }
+      options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 },
+      functionName: "AI.FILL"
     });
 
     if (!res.ok) return errorCode(res.code);
@@ -570,7 +574,8 @@ export async function FORMULA(instruction, contextRange, options) {
       options: {
         ...opt,
         temperature: 0.0 // Strict as requested
-      }
+      },
+      functionName: "AI.FORMULA"
     });
 
     if (!res.ok) return errorCode(res.code);
