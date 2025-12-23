@@ -264,7 +264,7 @@ export async function geminiGenerate(req) {
       diagInc("cacheHits", 1);
       const lat = Date.now() - started;
       diagSuccess({ model, latencyMs: lat, cacheKey, cached: true });
-      diagTrackRequest({ success: true, code: "CACHE_MEM", model, latencyMs: lat, cached: true });
+      diagTrackRequest({ success: true, code: "CACHE_MEM", model, latencyMs: lat, cached: true, functionName: req.functionName });
       return {
         ok: true,
         text: cached,
@@ -284,7 +284,7 @@ export async function geminiGenerate(req) {
       ST.memCache.set(cacheKey, pv);
       const lat = Date.now() - started;
       diagSuccess({ model, latencyMs: lat, cacheKey, cached: true });
-      diagTrackRequest({ success: true, code: "CACHE_PERSIST", model, latencyMs: lat, cached: true });
+      diagTrackRequest({ success: true, code: "CACHE_PERSIST", model, latencyMs: lat, cached: true, functionName: req.functionName });
       return {
         ok: true,
         text: pv,
@@ -340,7 +340,7 @@ export async function geminiGenerate(req) {
             const lat = Date.now() - attemptStart;
 
             // Log de l'échec
-            diagTrackRequest({ success: false, code, message: msg, httpStatus: status, latencyMs: lat, model });
+            diagTrackRequest({ success: false, code, message: msg, httpStatus: status, latencyMs: lat, model, functionName: req.functionName });
 
             if (attempt < retries && isRetriableHttpStatus(status)) {
               await sleep(400 * Math.pow(2, attempt));
@@ -360,7 +360,7 @@ export async function geminiGenerate(req) {
           if (isBlockedResponse(json)) {
             const msg = diagnostics.blockReason ? `Blocked: ${diagnostics.blockReason}` : "Blocked by safety settings";
             diagError(ERR.BLOCKED, msg, resp.status);
-            diagTrackRequest({ success: false, code: ERR.BLOCKED, message: msg, httpStatus: resp.status, latencyMs: lat, model });
+            diagTrackRequest({ success: false, code: ERR.BLOCKED, message: msg, httpStatus: resp.status, latencyMs: lat, model, functionName: req.functionName });
             return { ok: false, code: ERR.BLOCKED, errorCode: ERR.BLOCKED, message: msg, httpStatus: resp.status, diagnostics };
           }
 
@@ -370,7 +370,7 @@ export async function geminiGenerate(req) {
           if (!normalizedText.trim()) {
             const msg = candidatesCount === 0 ? "Empty response" : `Empty response (finish: ${finishReason})`;
             diagError(ERR.EMPTY_RESPONSE, msg, resp.status);
-            diagTrackRequest({ success: false, code: ERR.EMPTY_RESPONSE, message: msg, httpStatus: resp.status, latencyMs: lat, model });
+            diagTrackRequest({ success: false, code: ERR.EMPTY_RESPONSE, message: msg, httpStatus: resp.status, latencyMs: lat, model, functionName: req.functionName });
             return { ok: false, code: ERR.EMPTY_RESPONSE, errorCode: ERR.EMPTY_RESPONSE, message: msg, httpStatus: resp.status, diagnostics };
           }
 
@@ -385,11 +385,12 @@ export async function geminiGenerate(req) {
           diagTrackRequest({ 
             success: true, 
             code: "OK", 
-            message: "", 
+            message: req.user || "", // Log prompt as message for visibility
             usage: diagnostics.usage, // Important pour le compteur de tokens
             latencyMs: lat, 
             model, 
-            cached: false 
+            cached: false,
+            functionName: req.functionName
           });
 
           return { ok: true, text: cleaned, cached: false, cacheKey, latencyMs: lat, diagnostics };
@@ -404,7 +405,7 @@ export async function geminiGenerate(req) {
           }
 
           diagError(code, msg, 0);
-          diagTrackRequest({ success: false, code, message: msg, latencyMs: lat, model });
+          diagTrackRequest({ success: false, code, message: msg, latencyMs: lat, model, functionName: req.functionName });
           
           const diagnostics = buildDiagnostics({ json: {}, status: 0, cacheKey, latencyMs: lat });
           return { ok: false, code, errorCode: code, message: msg, httpStatus: 0, diagnostics };
@@ -412,7 +413,7 @@ export async function geminiGenerate(req) {
       }
 
       diagError(ERR.API_ERROR, "Unknown error", 0);
-      diagTrackRequest({ success: false, code: ERR.API_ERROR, message: "Unknown", latencyMs: Date.now() - started, model });
+      diagTrackRequest({ success: false, code: ERR.API_ERROR, message: "Unknown", latencyMs: Date.now() - started, model, functionName: req.functionName });
       return { ok: false, code: ERR.API_ERROR, errorCode: ERR.API_ERROR, message: "Unknown error", httpStatus: 0, diagnostics: {} };
     } finally {
       release();

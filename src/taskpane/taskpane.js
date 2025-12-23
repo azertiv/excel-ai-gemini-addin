@@ -33,6 +33,31 @@ function formatTime(iso) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute:'2-digit', second:'2-digit' });
 }
 
+function getTokenColorClass(total) {
+  if (total < 500) return 'low';
+  if (total < 2000) return 'medium';
+  return 'high';
+}
+
+// Helper to toggle log details
+function toggleLogDetails(id) {
+    const el = document.getElementById('code-' + id);
+    if(el) {
+        el.style.display = (el.style.display === 'block') ? 'none' : 'block';
+    }
+}
+
+// Ensure function is safe to call
+function escapeHtml(text) {
+  if (!text) return "";
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 function updateLogsUI() {
   try {
     const snap = getDiagnosticsSnapshot();
@@ -56,27 +81,64 @@ function updateLogsUI() {
     let html = "";
     for (const log of snap.logs) {
       const isErr = !log.success;
+      const logTotalTokens = (log.inputTokens || 0) + (log.outputTokens || 0);
+      const tokenClass = getTokenColorClass(logTotalTokens);
       const cacheBadge = log.cached ? '<span class="badge cached">CACHE</span>' : '';
-      const tokensInfo = log.cached ? '-' : `${log.inputTokens} &rarr; ${log.outputTokens}`;
+      const errBadge = isErr ? '<span class="badge err">ERR</span>' : '';
+
+      const funcName = log.functionName || log.code || "UNKNOWN";
+      // Si log.code est different de funcName et de "OK", on peut vouloir l'afficher (ex: type d'erreur)
+      const errCode = (isErr && log.code !== funcName) ? `(${log.code})` : "";
+
+      const uniqueId = log.id || Math.random().toString(36).substr(2, 9);
+
+      // Full details (Formula/Code/Prompt)
+      const detailText = log.message || "(No details available)";
+      // Security: escape content
+      const safeDetailText = escapeHtml(detailText);
 
       html += `
         <div class="log-item ${isErr ? 'err' : ''}">
-          <div class="log-time">${formatTime(log.at)}</div>
+            <div class="log-row-top">
+                <!-- Left: Token Badge -->
+                <div class="token-badge ${tokenClass}">
+                    <div>${log.cached ? 'CACHE' : logTotalTokens}</div>
+                    ${!log.cached ? `<div class="token-details">${log.inputTokens} &rarr; ${log.outputTokens}</div>` : ''}
+                </div>
 
-          <div class="log-main">
-             ${cacheBadge}
-             <span title="${log.model}">${log.model}</span>
-             <span class="log-code">${log.code}</span>
-          </div>
+                <!-- Middle: Main Info -->
+                <div class="log-info">
+                    <div>
+                        <span class="log-func">${funcName}</span>
+                        <span class="log-time">${formatTime(log.at)}</span>
+                    </div>
+                    <div class="log-model">
+                        ${log.model} ${errCode}
+                    </div>
+                    ${detailText ? `<div class="log-code-toggle" data-id="${uniqueId}">Afficher détails</div>` : ''}
+                </div>
 
-          <div class="log-meta">
-             <div>${tokensInfo}</div>
-             <div>${log.latencyMs}ms</div>
-          </div>
+                <!-- Right: Status -->
+                <div class="log-status">
+                    <div class="log-latency">${log.latencyMs}ms</div>
+                    ${cacheBadge}
+                    ${errBadge}
+                </div>
+            </div>
+
+            <div id="code-${uniqueId}" class="log-full-code">${safeDetailText}</div>
         </div>
       `;
     }
     list.innerHTML = html;
+
+    // Attach event listeners for toggles
+    list.querySelectorAll('.log-code-toggle').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const id = e.target.getAttribute('data-id');
+            toggleLogDetails(id);
+        });
+    });
   } catch (e) {
     console.error("Error updating logs UI", e);
   }
