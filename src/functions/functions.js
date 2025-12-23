@@ -20,7 +20,7 @@ function safeString(v) {
 
 function parseOptions(optionsJson) {
   if (!optionsJson) return {};
-  if (typeof optionsJson === "object" && optionsJson !== null) return optionsJson; 
+  if (typeof optionsJson === "object" && optionsJson !== null) return optionsJson;
   if (typeof optionsJson !== "string") return {};
   const s = optionsJson.trim();
   if (!s) return {};
@@ -115,7 +115,7 @@ function truncateForCell(s, maxChars = LIMITS.MAX_CELL_CHARS) {
 function extractJsonObject(text) {
   const s = String(text || "").trim();
   if (!s) return null;
-  
+
   // Nettoyage Markdown ```json ... ```
   const clean = s.replace(/```json/g, "").replace(/```/g, "").trim();
 
@@ -206,6 +206,21 @@ function sysFill(lang = "fr", maxRows = LIMITS.MAX_FILL_ROWS) {
     `Return at most ${maxRows} values.`,
     "Return only the values, in order, one per target row.",
     "If a value is unknown, return an empty string for that row."
+  ].join("\n");
+}
+
+function sysFormula(lang) {
+  const isFr = (lang || "").toLowerCase().startsWith("fr");
+  return [
+    "You are an expert Excel formula generator.",
+    "Your goal is to output a VALID Excel formula string based on the user request.",
+    `Respond in ${lang}.`,
+    isFr
+      ? "Use FRENCH Excel function names (e.g., SOMME, SI, RECHERCHEV...)."
+      : "Use ENGLISH Excel function names (e.g., SUM, IF, VLOOKUP...).",
+    isFr ? "Use SEMICOLON (;) as argument separator." : "Use COMMA (,) as argument separator.",
+    "Return ONLY the formula starting with '='.",
+    "No Markdown. No code fences. No explanations."
   ].join("\n");
 }
 
@@ -464,7 +479,7 @@ export async function TABLE(prompt, contextRange, options) {
     const requestedHeaders = Array.isArray(opt.headers) ? opt.headers.map((h) => safeString(h)) : null;
 
     const ctx = contextRange ? matrixToTSV(contextRange, opt.maxContextChars || LIMITS.MAX_CONTEXT_CHARS) : "";
-    
+
     // System Prompt forcé en mode JSON strict
     const system = [
       "You are a generator of tabular data for Excel.",
@@ -477,7 +492,7 @@ export async function TABLE(prompt, contextRange, options) {
     ].filter(Boolean).join("\n");
 
     const user = [
-      ctx ? `CONTEXT (TSV, may be truncated):\n${ctx}` : "", 
+      ctx ? `CONTEXT (TSV, may be truncated):\n${ctx}` : "",
       `PROMPT:\n${coerceToTextOrJoin2D(prompt)}`
     ].filter(Boolean).join("\n\n");
 
@@ -485,8 +500,8 @@ export async function TABLE(prompt, contextRange, options) {
     const res = await callGemini({
       system,
       user,
-      options: { 
-        ...opt, 
+      options: {
+        ...opt,
         temperature: typeof opt.temperature === "number" ? opt.temperature : 0.1,
         responseMimeType: "application/json"
       }
@@ -505,7 +520,7 @@ export async function TABLE(prompt, contextRange, options) {
     // Construction de la matrice de sortie (Rectangulaire)
     const out = [h];
     const numCols = h.length;
-    
+
     const rows = obj.rows.slice(0, maxRows);
     for (const r of rows) {
       if (!Array.isArray(r)) continue;
@@ -569,6 +584,42 @@ export async function FILL(exampleRange, targetRange, instruction, options) {
   }
 }
 
+export async function FORMULA(instruction, contextRange, options) {
+  try {
+    const opt = parseOptions(options);
+    const lang = opt.lang || "fr";
+
+    const ctx = contextRange ? matrixToTSV(contextRange, opt.maxContextChars || LIMITS.MAX_CONTEXT_CHARS) : "";
+    const user = [
+      ctx ? `CONTEXT (TSV, may be truncated):\n${ctx}` : "",
+      `INSTRUCTION:\n${coerceToTextOrJoin2D(instruction)}`
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    const res = await callGemini({
+      system: sysFormula(lang),
+      user,
+      options: {
+        ...opt,
+        temperature: 0.0 // Strict as requested
+      }
+    });
+
+    if (!res.ok) return errorCode(res.code);
+
+    // Cleanup response
+    let text = res.text.trim();
+    // Remove backticks if present (markdown code block)
+    text = text.replace(/```/g, "").trim();
+    if (!text.startsWith("=")) text = "=" + text;
+
+    return truncateForCell(text);
+  } catch (e) {
+    return errorCode(ERR.API_ERROR);
+  }
+}
+
 function registerCustomFunctions() {
   if (typeof CustomFunctions === "undefined" || typeof CustomFunctions.associate !== "function") return false;
 
@@ -579,6 +630,7 @@ function registerCustomFunctions() {
     ["AI.TRANSLATE", TRANSLATE],
     ["AI.TABLE", TABLE],
     ["AI.FILL", FILL],
+    ["AI.FORMULA", FORMULA],
     ["AI.CLEAN", CLEAN],
     ["AI.SUMMARIZE", SUMMARIZE],
     ["AI.KEYSTATUS", KEY_STATUS],
@@ -602,7 +654,7 @@ const _registered = registerCustomFunctions();
 
 if (!_registered && typeof setTimeout === "function") {
   let attempts = 0;
-  const maxAttempts = 20; 
+  const maxAttempts = 20;
   const intervalMs = 500;
 
   const tick = () => {
