@@ -69,7 +69,7 @@ export function diagSuccess({ model, latencyMs, cacheKey, cached } = {}) {
 /**
  * Enregistre une requête terminée dans l'historique et met à jour les coûts.
  */
-export function diagTrackRequest({ success, code, message, usage, latencyMs, model, cached, httpStatus }) {
+export function diagTrackRequest({ success, code, message, usage, latencyMs, model, cached, httpStatus, functionName }) {
   // Mise à jour des compteurs basiques si pas déjà fait par diagSuccess/diagError
   // (Note: diagSuccess/Error incrémentent déjà success/failures, ici on gère logs et coûts)
 
@@ -91,6 +91,7 @@ export function diagTrackRequest({ success, code, message, usage, latencyMs, mod
     at: new Date().toISOString(),
     success,
     code: code || (success ? "OK" : "ERR"),
+    functionName: functionName || "?",
     message: message || "",
     model: model || "?",
     latencyMs: latencyMs || 0,
