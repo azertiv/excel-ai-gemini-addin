@@ -69,6 +69,17 @@
       "result": { "type": "string", "dimensionality": "matrix" }
     },
     {
+      "id": "AI.FORMULA",
+      "name": "FORMULA",
+      "description": "Generate a valid Excel formula from instruction and context.",
+      "parameters": [
+        { "name": "instruction", "description": "Instruction for the formula.", "type": "string", "dimensionality": "scalar" },
+        { "name": "contextRange", "description": "Optional context data.", "type": "any", "dimensionality": "matrix", "optional": true },
+        { "name": "options", "description": "Optional JSON options (lang, etc.).", "type": "string", "dimensionality": "scalar", "optional": true }
+      ],
+      "result": { "type": "string", "dimensionality": "scalar" }
+    },
+    {
       "id": "AI.CLEAN",
       "name": "CLEAN",
       "description": "Clean/normalize text (local deterministic by default; AI mode optional).",
