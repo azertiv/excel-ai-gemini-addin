@@ -1,7 +1,7 @@
 // src/shared/gemini.js
 
 import { GEMINI, DEFAULTS, LIMITS, ERR, STORAGE } from "./constants";
-import { getApiKey, getItem, setItem, removeItem } from "./storage";
+import { getApiKey, getMaxTokens, getItem, setItem, removeItem } from "./storage";
 import { LRUCache } from "./lru";
 import { hashKey } from "./hash";
 import { diagInc, diagSet, diagError, diagSuccess, diagTrackRequest, getSharedState } from "./diagnostics";
@@ -220,12 +220,22 @@ export async function geminiGenerate(req) {
   const ttlMs = Math.max(0, Number(req.cacheTtlSec || DEFAULTS.cacheTtlSec)) * 1000;
 
   const generationConfig = req.generationConfig || {};
+
+  // Logic priority: req.generationConfig.maxOutputTokens > storage setting > DEFAULTS.maxTokens
+  let maxTokens = DEFAULTS.maxTokens;
+  if (typeof generationConfig.maxOutputTokens === "number") {
+    maxTokens = generationConfig.maxOutputTokens;
+  } else {
+    const stored = await getMaxTokens();
+    if (stored) maxTokens = stored;
+  }
+
   const body = {
     systemInstruction: { role: "system", parts: [{ text: String(req.system || "") }] },
     contents: [{ role: "user", parts: [{ text: String(req.user || "") }] }],
     generationConfig: {
       temperature: typeof generationConfig.temperature === "number" ? generationConfig.temperature : DEFAULTS.temperature,
-      maxOutputTokens: typeof generationConfig.maxOutputTokens === "number" ? generationConfig.maxOutputTokens : DEFAULTS.maxTokens
+      maxOutputTokens: maxTokens
     }
   };
 
