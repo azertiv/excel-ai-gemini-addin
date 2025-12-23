@@ -219,7 +219,8 @@ function sysFormula(lang) {
       ? "Use FRENCH Excel function names (e.g., SOMME, SI, RECHERCHEV...)."
       : "Use ENGLISH Excel function names (e.g., SUM, IF, VLOOKUP...).",
     isFr ? "Use SEMICOLON (;) as argument separator." : "Use COMMA (,) as argument separator.",
-    "Return ONLY the formula starting with '='.",
+    "Return ONLY the formula starting with '='. NOTHING ELSE.",
+    "Do NOT include conversational text like 'Voici la formule' or 'Here is the formula'.",
     "No Markdown. No code fences. No explanations."
   ].join("\n");
 }
@@ -610,9 +611,32 @@ export async function FORMULA(instruction, contextRange, options) {
 
     // Cleanup response
     let text = res.text.trim();
-    // Remove backticks if present (markdown code block)
+    // Remove backticks (markdown code block)
+    text = text.replace(/```[\s\S]*?```/g, (match) => {
+      // If code block contains something looking like a formula, extract it
+      const inner = match.replace(/```/g, "").trim();
+      return inner.startsWith("=") ? inner : match;
+    });
+    // Remove remaining backticks
     text = text.replace(/```/g, "").trim();
-    if (!text.startsWith("=")) text = "=" + text;
+
+    // Find the formula part if mixed with text
+    // Look for the last occurrence of "=" followed by typical formula chars
+    // This is a heuristic. A robust way is to ask the model to strictly follow rules, which we did.
+    // If text doesn't start with '=', try to find it.
+    if (!text.startsWith("=")) {
+      const split = text.split("\n");
+      // Prefer the last non-empty line
+      const lastLine = split[split.length - 1].trim();
+      if (lastLine.startsWith("=")) {
+        text = lastLine;
+      } else {
+        // Fallback: search for first "="
+        const idx = text.indexOf("=");
+        if (idx >= 0) text = text.slice(idx).trim();
+        else text = "=" + text; // Force it if missing
+      }
+    }
 
     return truncateForCell(text);
   } catch (e) {
