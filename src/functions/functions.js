@@ -213,7 +213,19 @@ function sysClassify(labels, lang = "en") {
   ].join("\n");
 }
 
-function sysClean(lang = "fr") {
+function sysClean(lang = "fr", expectedItems) {
+  if (typeof expectedItems === "number" && expectedItems > 1) {
+    return [
+      "You are a text normalizer for spreadsheet cells.",
+      `Respond in ${lang}.`,
+      "Return STRICT JSON only (no Markdown, no code fences).",
+      `Return an object with a single key 'items' containing exactly ${expectedItems} strings in the same order as the provided cells.`,
+      "Preserve the meaning of each cell independently.",
+      "For empty inputs, return an empty string at the same position.",
+      "Do not invent or merge content."
+    ].join("\n");
+  }
+
   return [
     "You are a text normalizer for spreadsheet cells.",
     `Respond in ${lang}.`,
@@ -409,28 +421,89 @@ export async function CLEAN(text, options) {
     const opt = parseOptions(options);
     const mode = (opt.mode || "basic").toLowerCase();
 
-    const raw = normalizeNewlines(coerceToTextOrJoin2D(text));
-    if (!raw.trim()) return "";
+    const matrix = normalizeRangeToMatrix(text);
+    const flatCells = [];
+    for (const row of matrix) {
+      for (const cell of row) {
+        flatCells.push(normalizeNewlines(coerceToTextOrJoin2D(cell)));
+      }
+    }
 
-    if (mode === "basic") {
+    if (flatCells.length === 0) return errorCode(ERR.BAD_INPUT);
+
+    const cleanBasic = (raw) => {
+      if (!safeString(raw).trim()) return "";
+
       let s = raw.trim();
       s = s.replace(/[ \t]+/g, " ");
       s = s.replace(/\n{3,}/g, "\n\n");
       if (opt.case === "upper") s = s.toUpperCase();
       if (opt.case === "lower") s = s.toLowerCase();
       return truncateForCell(s);
+    };
+
+    if (flatCells.length === 1) {
+      const raw = flatCells[0];
+      if (!raw.trim()) return "";
+
+      if (mode === "basic") return cleanBasic(raw);
+
+      const lang = opt.lang || "fr";
+      const res = await callGemini({
+        system: sysClean(lang),
+        user: raw,
+        options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 },
+        functionName: "AI.CLEAN"
+      });
+
+      if (!res.ok) return errorCode(res.code);
+      return truncateForCell(res.text);
+    }
+
+    if (mode === "basic") {
+      let idx = 0;
+      return matrix.map((row) => row.map(() => cleanBasic(flatCells[idx++])));
     }
 
     const lang = opt.lang || "fr";
+    const hasContent = flatCells.some((cell) => safeString(cell).trim());
+    if (!hasContent) return matrix.map((row) => row.map(() => ""));
+
+    const userCells = flatCells
+      .map((cell, idx) => `${idx + 1}. ${cell ? cell : "<empty>"}`)
+      .join("\n");
+
+    const user = [
+      `You will clean ${flatCells.length} independent cell values.`,
+      "Return STRICT JSON only (no Markdown, no code fences).",
+      `Return an object with a single key 'items' containing exactly ${flatCells.length} strings in the same order as the provided cells.`,
+      "Preserve the intent of each cell; do not merge or summarize.",
+      "Use an empty string for empty or whitespace-only inputs.",
+      "Lightly normalize whitespace and punctuation without inventing content.",
+      "Cells:",
+      userCells
+    ].join("\n");
+
     const res = await callGemini({
-      system: sysClean(lang),
-      user: raw,
-      options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 },
+      system: sysClean(lang, flatCells.length),
+      user,
+      options: {
+        ...opt,
+        temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0,
+        responseMimeType: "application/json"
+      },
       functionName: "AI.CLEAN"
     });
 
     if (!res.ok) return errorCode(res.code);
-    return truncateForCell(res.text);
+
+    const obj = extractJsonObject(res.text);
+    if (!obj || !Array.isArray(obj.items)) return errorCode(ERR.PARSE_ERROR);
+    if (obj.items.length !== flatCells.length) return errorCode(ERR.PARSE_ERROR);
+
+    const cleaned = obj.items.map((item) => safeString(item));
+    let idx = 0;
+    return matrix.map((row) => row.map(() => truncateForCell(cleaned[idx++])));
   } catch (e) {
     return errorCode(ERR.API_ERROR);
   }
