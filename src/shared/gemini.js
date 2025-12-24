@@ -218,6 +218,7 @@ export async function geminiGenerate(req) {
 
   const cacheMode = sanitizeCacheMode(req.cache);
   const ttlMs = Math.max(0, Number(req.cacheTtlSec || DEFAULTS.cacheTtlSec)) * 1000;
+  const cacheOnly = Boolean(req.cacheOnly);
 
   const generationConfig = req.generationConfig || {};
 
@@ -294,6 +295,13 @@ export async function geminiGenerate(req) {
         diagnostics: { cacheKey, cached: true, cacheSource: "persistent" }
       };
     }
+  }
+
+  if (cacheOnly) {
+    const lat = Date.now() - started;
+    const diagnostics = { cacheKey, cached: false, cacheOnly: true, cacheMode };
+    diagTrackRequest({ success: false, code: ERR.CACHE_MISS, message: "Cache only mode", latencyMs: lat, model, cached: false, functionName: req.functionName });
+    return { ok: false, code: ERR.CACHE_MISS, errorCode: ERR.CACHE_MISS, cacheKey, latencyMs: lat, diagnostics };
   }
 
   if (ST.inflight.has(cacheKey)) {

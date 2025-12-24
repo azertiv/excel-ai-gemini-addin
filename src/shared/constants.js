@@ -30,8 +30,8 @@ export const DEFAULTS = {
   lang: "fr",
   timeoutMs: 20000,
   retry: 1,
-  cache: "memory",
-  cacheTtlSec: 3600,
+  cache: "persistent",
+  cacheTtlSec: 24 * 3600,
   temperature: 0.2,
   maxTokens: 2048
 };
@@ -48,6 +48,7 @@ export const ERR = {
   API_ERROR: "#AI_API_ERROR",
   PARSE_ERROR: "#AI_PARSE_ERROR",
   NOT_FOUND: "#AI_NOT_FOUND",
+  CACHE_MISS: "#AI_CACHE_MISS",
   TOO_LARGE: "#AI_TOO_LARGE",
   EMPTY_RESPONSE: "#AI_EMPTY_RESPONSE"
 };
