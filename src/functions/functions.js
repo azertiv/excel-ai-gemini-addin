@@ -46,6 +46,26 @@ function normalizeNewlines(s) {
   return String(s || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
 }
 
+function extractFormula(text) {
+  const cleaned = normalizeNewlines(String(text || "").replace(/```[a-z]*\n?/gi, "").replace(/```/g, ""));
+  if (!cleaned) return "";
+
+  const lines = cleaned
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    const sanitized = line.replace(/^[\s>*•-]+/, "").replace(/^['\"]/, "");
+    if (sanitized.startsWith("=")) return sanitized;
+    const match = sanitized.match(/=(.+)/);
+    if (match) return "=" + match[1].trim();
+  }
+
+  const first = lines[0] || "";
+  return first ? (first.startsWith("=") ? first : "=" + first) : "";
+}
+
 function matrixToTSV(matrix, maxChars = LIMITS.MAX_CONTEXT_CHARS) {
   if (!Array.isArray(matrix)) return "";
   let out = "";
@@ -214,11 +234,13 @@ function sysFormula(lang) {
   return [
     "You are an expert Excel formula generator.",
     "Your goal is to output a VALID Excel formula string based on the user request.",
+    "Leverage advanced Excel capabilities (dynamic arrays, LET/LAMBDA, structured references, advanced date/time, lookup, statistics, financial functions) when relevant.",
     `Respond in ${lang}.`,
     isFr
       ? "Use FRENCH Excel function names (e.g., SOMME, SI, RECHERCHEV...)."
       : "Use ENGLISH Excel function names (e.g., SUM, IF, VLOOKUP...).",
     isFr ? "Use SEMICOLON (;) as argument separator." : "Use COMMA (,) as argument separator.",
+    "Return exactly one ready-to-use Excel formula with no surrounding text.",
     "Return ONLY the formula starting with '='.",
     "No Markdown. No code fences. No explanations."
   ].join("\n");
@@ -580,13 +602,10 @@ export async function FORMULA(instruction, contextRange, options) {
 
     if (!res.ok) return errorCode(res.code);
 
-    // Cleanup response
-    let text = res.text.trim();
-    // Remove backticks if present (markdown code block)
-    text = text.replace(/```/g, "").trim();
-    if (!text.startsWith("=")) text = "=" + text;
+    const formula = extractFormula(res.text);
+    if (!formula) return errorCode(ERR.PARSE_ERROR);
 
-    return truncateForCell(text);
+    return truncateForCell(formula);
   } catch (e) {
     return errorCode(ERR.API_ERROR);
   }
