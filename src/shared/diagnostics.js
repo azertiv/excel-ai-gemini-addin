@@ -107,6 +107,16 @@ export function diagTrackRequest({ success, code, message, usage, latencyMs, mod
   if (state.diagnostics.logs.length > 50) state.diagnostics.logs.pop();
 }
 
+export function resetDiagnosticsLogs() {
+  if (!state.diagnostics) return;
+
+  state.diagnostics.logs = [];
+  state.diagnostics.totalInputTokens = 0;
+  state.diagnostics.totalOutputTokens = 0;
+  state.diagnostics.estimatedCostUSD = 0;
+  state.diagnostics.startedAt = new Date().toISOString();
+}
+
 export function getDiagnosticsSnapshot() {
   return JSON.parse(JSON.stringify(state.diagnostics || {}));
 }

@@ -89,3 +89,33 @@ button.danger { background: #d13438; color: white; border-color: #d13438; }
   border: 1px solid #eee;
   white-space: pre-wrap;
 }
+
+.chart-box {
+  background: #f8fbff;
+  border: 1px solid #e1efff;
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.chart-header {
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: #0f6cbd;
+}
+
+.usage-chart {
+  width: 100%;
+  display: block;
+}
+
+.log-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.log-actions .refresh-btn {
+  flex: 1;
+}
