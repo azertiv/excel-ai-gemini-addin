@@ -206,13 +206,13 @@ function sysTranslate(targetLang) {
 function sysClassify(labels, lang = "en") {
   return [
     "You are a strict classifier.",
-    `Return exactly one label from this set: ${labels.join(" | ")}`,
+    `Return exactly one label from this set, using the label text verbatim: ${labels.join(" | ")}`,
+    "Do not translate, expand, or paraphrase labels.",
     "If uncertain, return exactly: UNKNOWN",
     `Respond in ${lang}.`,
-    "Return only the label."
+    "Return only the label.",
   ].join("\n");
 }
-
 function sysClean(lang = "fr", expectedItems) {
   if (typeof expectedItems === "number" && expectedItems > 1) {
     return [
@@ -391,7 +391,14 @@ export async function CLASSIFY(text, labels, options) {
     const lang = opt.lang || "en";
     const threshold = typeof opt.threshold === "number" ? clamp(opt.threshold, 0, 1, 0.55) : 0.55;
 
-    const labs = flattenLabels(labels);
+    const labs = Array.from(
+      new Map(
+        flattenLabels(labels)
+          .map((label) => safeString(label).trim())
+          .filter(Boolean)
+          .map((label) => [label.toLowerCase(), label])
+      ).values()
+    );
     if (!labs.length) return errorCode(ERR.BAD_INPUT);
 
     const matrix = normalizeRangeToMatrix(text);
@@ -439,12 +446,13 @@ export async function CLASSIFY(text, labels, options) {
       "You are a strict classifier.",
       `You will classify ${flatCells.length} independent cell values.`,
       `Labels: ${labs.join(" | ")}`,
+      "Use the label text verbatim; do not translate or paraphrase labels.",
       `If confidence < ${threshold} or information is missing, return exactly: UNKNOWN`,
       `Respond in ${lang}.`,
       "Return STRICT JSON only (no Markdown, no code fences).",
       `Return an object with a single key 'items' containing exactly ${flatCells.length} strings in the same order as the provided cells.`,
       "Each item must be one of the provided labels or UNKNOWN.",
-      "No explanations."
+      "No explanations.",
     ].join("\n");
 
     const user = ["Cells:", userCells].join("\n");
