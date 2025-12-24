@@ -15,7 +15,7 @@
     {
       "id": "AI.WEB",
       "name": "WEB",
-      "description": "Targeted factual lookup with optional entity focus and source hyperlink.",
+      "description": "Targeted factual lookup with optional entity focus and source hyperlink (returns an error or justification when data is not fully confirmed).",
       "parameters": [
         { "name": "query", "description": "Factual question to answer precisely.", "type": "string", "dimensionality": "scalar" },
         { "name": "focus", "description": "Optional entity/context cell or range.", "type": "any", "dimensionality": "matrix", "optional": true },
