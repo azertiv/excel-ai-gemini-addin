@@ -126,6 +126,34 @@ function coerceToTextOrJoin2D(v) {
   return safeString(v);
 }
 
+function normalizeRangeToMatrix(v) {
+  if (!Array.isArray(v)) return [[v]];
+  if (Array.isArray(v[0])) return v.map((row) => (Array.isArray(row) ? row : [row]));
+  return v.map((cell) => [cell]);
+}
+
+function lightlyCleanExtractedValue(value, instruction) {
+  const raw = safeString(value).trim();
+  if (!raw) return "";
+
+  const loweredInstruction = safeString(instruction).toLowerCase();
+  const isEmail = loweredInstruction.includes("mail") || loweredInstruction.includes("email");
+
+  if (isEmail) {
+    let s = raw;
+    s = s.replace(/\s*\[\s*at\s*\]\s*|\s*\(\s*at\s*\)\s*|\s+at\s+/gi, "@");
+    s = s.replace(/\s*\[\s*dot\s*\]\s*|\s*\(\s*dot\s*\)\s*|\s+dot\s+/gi, ".");
+    s = s.replace(/\s*\[\s*point\s*\]\s*|\s*\(\s*point\s*\)\s*|\s+point\s+/gi, ".");
+    s = s.replace(/\s*@\s*/g, "@");
+    s = s.replace(/\s*\.\s*/g, ".");
+    s = s.replace(/[<>\"'`\u201c\u201d]/g, "");
+    s = s.replace(/\s+/g, " ").trim().toLowerCase();
+    return s;
+  }
+
+  return raw;
+}
+
 function truncateForCell(s, maxChars = LIMITS.MAX_CELL_CHARS) {
   const t = normalizeNewlines(s);
   if (t.length <= maxChars) return t;
@@ -204,16 +232,24 @@ function sysSummarize(lang = "fr") {
   ].join("\n");
 }
 
-function sysExtract(instruction, lang = "fr") {
+function sysExtract(instruction, lang = "fr", expectedItems) {
+  const strictArray =
+    typeof expectedItems === "number" && expectedItems > 0
+      ? `Return an object with a single key 'items' which is an array of exactly ${expectedItems} strings, preserving order.`
+      : "Return an object with a single key 'items' which is an array of strings.";
+
   return [
     "You are an expert extraction engine.",
     `Goal: Extract all entities matching this description: "${instruction}"`,
     `Respond in ${lang}.`,
+    "Lightly normalize results (trim spaces, fix obvious email obfuscation like [at]/(at) -> @ and [dot]/(dot)/point -> .).",
     "Return STRICT JSON only (no Markdown, no code fences).",
-    "Return an object with a single key 'items' which is an array of strings.",
+    strictArray,
     "Example: { \"items\": [\"match1\", \"match2\"] }",
-    "If nothing found, return { \"items\": [] }.",
-    "Extract exact values from the text."
+    typeof expectedItems === "number"
+      ? "If a value is missing for a cell, return an empty string in that position."
+      : "If nothing found, return { \"items\": [] }.",
+    "Extract exact values from the text without inventing data."
   ].join("\n");
 }
 
@@ -429,13 +465,60 @@ export async function EXTRACT(instruction, textOrRange, options) {
     const instr = safeString(instruction).trim();
     if (!instr) return errorCode(ERR.BAD_INPUT);
 
-    // Flatten textOrRange into a single text block
-    const raw = normalizeNewlines(coerceToTextOrJoin2D(textOrRange));
-    if (!raw.trim()) return "";
+    const matrix = normalizeRangeToMatrix(textOrRange);
+    const flatCells = [];
+    for (const row of matrix) {
+      for (const cell of row) {
+        flatCells.push(normalizeNewlines(coerceToTextOrJoin2D(cell)));
+      }
+    }
+
+    if (flatCells.length === 0) return errorCode(ERR.BAD_INPUT);
+
+    if (flatCells.length === 1) {
+      const raw = flatCells[0];
+      if (!raw.trim()) return errorCode(ERR.NOT_FOUND);
+
+      const res = await callGemini({
+        system: sysExtract(instr, lang),
+        user: raw,
+        options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 },
+        functionName: "AI.EXTRACT"
+      });
+
+      if (!res.ok) return errorCode(res.code);
+
+      const obj = extractJsonObject(res.text);
+      if (!obj || !Array.isArray(obj.items)) return errorCode(ERR.PARSE_ERROR);
+
+      const items = obj.items.map((item) => lightlyCleanExtractedValue(item, instr)).filter(Boolean);
+      if (items.length === 0) return errorCode(ERR.NOT_FOUND);
+
+      return items.map((v) => [truncateForCell(v)]);
+    }
+
+    const hasNonEmptyCell = flatCells.some((cell) => safeString(cell).trim());
+    if (!hasNonEmptyCell) return matrix.map((row) => row.map(() => errorCode(ERR.NOT_FOUND)));
+
+    const userCells = flatCells
+      .map((cell, idx) => `${idx + 1}. ${cell ? cell : "<empty>"}`)
+      .join("\n");
+
+    const user = [
+      `You will process ${flatCells.length} independent cell values.`,
+      `Instruction: "${instr}".`,
+      "Return STRICT JSON only (no Markdown, no code fences).",
+      `Return an object with a single key 'items' containing exactly ${flatCells.length} strings in the same order as the provided cells.`,
+      "Use an empty string when the requested value is absent or uncertain for a cell.",
+      "Do not invent values; only return data present in the corresponding cell.",
+      "Lightly clean outputs (trim spaces, fix obvious email obfuscation).",
+      "Cells:",
+      userCells
+    ].join("\n");
 
     const res = await callGemini({
-      system: sysExtract(instr, lang),
-      user: raw,
+      system: sysExtract(instr, lang, flatCells.length),
+      user,
       options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 },
       functionName: "AI.EXTRACT"
     });
@@ -444,12 +527,17 @@ export async function EXTRACT(instruction, textOrRange, options) {
 
     const obj = extractJsonObject(res.text);
     if (!obj || !Array.isArray(obj.items)) return errorCode(ERR.PARSE_ERROR);
+    if (obj.items.length !== flatCells.length) return errorCode(ERR.PARSE_ERROR);
 
-    const items = obj.items.map(safeString).filter(Boolean);
-    if (items.length === 0) return ""; // Or maybe a message? Empty string is standard for empty result in Excel.
-
-    // Return as a vertical spill
-    return items.map(v => [truncateForCell(v)]);
+    const cleaned = obj.items.map((item) => lightlyCleanExtractedValue(item, instr));
+    let idx = 0;
+    return matrix.map((row) =>
+      row.map(() => {
+        const v = cleaned[idx++];
+        if (safeString(v).trim()) return truncateForCell(v);
+        return errorCode(ERR.NOT_FOUND);
+      })
+    );
   } catch (e) {
     return errorCode(ERR.API_ERROR);
   }
