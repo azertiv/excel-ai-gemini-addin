@@ -240,6 +240,10 @@ export async function geminiGenerate(req) {
     }
   };
 
+  if (Array.isArray(req?.tools) && req.tools.length > 0) {
+    body.tools = req.tools;
+  }
+
   for (const k of ["topP", "topK", "candidateCount", "stopSequences"]) {
     if (generationConfig[k] !== undefined) body.generationConfig[k] = generationConfig[k];
   }
@@ -253,7 +257,8 @@ export async function geminiGenerate(req) {
     user: req.user || "",
     generationConfig: body.generationConfig,
     responseMimeType: req.responseMimeType || "",
-    responseJsonSchema: req.responseJsonSchema || null
+    responseJsonSchema: req.responseJsonSchema || null,
+    tools: req.tools || []
   });
 
   const cacheKey = await hashKey(rawKey);
