@@ -356,6 +356,7 @@ async function callGemini({ system, user, options, functionName }) {
     system,
     user,
     generationConfig: { temperature, maxOutputTokens: maxTokens },
+    tools: Array.isArray(opt.tools) ? opt.tools : undefined,
     cache: cacheMode,
     cacheTtlSec,
     cacheOnly,
@@ -440,7 +441,11 @@ export async function WEB(prompt, focusRange, showSource) {
     const res = await callGemini({
       system: sysWeb("fr"),
       user,
-      options: { temperature: 0.0, responseMimeType: "application/json" },
+      options: {
+        temperature: 0.0,
+        responseMimeType: "application/json",
+        tools: [{ googleSearchRetrieval: {} }]
+      },
       functionName: "AI.WEB"
     });
 
