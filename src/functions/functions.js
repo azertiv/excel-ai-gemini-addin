@@ -419,7 +419,6 @@ export async function CLASSIFY(text, labels, options) {
 export async function CLEAN(text, options) {
   try {
     const opt = parseOptions(options);
-    const mode = (opt.mode || "basic").toLowerCase();
 
     const matrix = normalizeRangeToMatrix(text);
     const flatCells = [];
@@ -431,22 +430,9 @@ export async function CLEAN(text, options) {
 
     if (flatCells.length === 0) return errorCode(ERR.BAD_INPUT);
 
-    const cleanBasic = (raw) => {
-      if (!safeString(raw).trim()) return "";
-
-      let s = raw.trim();
-      s = s.replace(/[ \t]+/g, " ");
-      s = s.replace(/\n{3,}/g, "\n\n");
-      if (opt.case === "upper") s = s.toUpperCase();
-      if (opt.case === "lower") s = s.toLowerCase();
-      return truncateForCell(s);
-    };
-
     if (flatCells.length === 1) {
       const raw = flatCells[0];
       if (!raw.trim()) return "";
-
-      if (mode === "basic") return cleanBasic(raw);
 
       const lang = opt.lang || "fr";
       const res = await callGemini({
@@ -458,11 +444,6 @@ export async function CLEAN(text, options) {
 
       if (!res.ok) return errorCode(res.code);
       return truncateForCell(res.text);
-    }
-
-    if (mode === "basic") {
-      let idx = 0;
-      return matrix.map((row) => row.map(() => cleanBasic(flatCells[idx++])));
     }
 
     const lang = opt.lang || "fr";
