@@ -13,6 +13,17 @@
       "result": { "type": "string", "dimensionality": "scalar" }
     },
     {
+      "id": "AI.WEB",
+      "name": "WEB",
+      "description": "Targeted factual lookup with optional entity focus and source hyperlink.",
+      "parameters": [
+        { "name": "query", "description": "Factual question to answer precisely.", "type": "string", "dimensionality": "scalar" },
+        { "name": "focus", "description": "Optional entity/context cell or range.", "type": "any", "dimensionality": "matrix", "optional": true },
+        { "name": "showSource", "description": "1 to wrap the value in a HYPERLINK with its source, else 0.", "type": "number", "dimensionality": "scalar", "optional": true }
+      ],
+      "result": { "type": "string", "dimensionality": "scalar" }
+    },
+    {
       "id": "AI.EXTRACT",
       "name": "EXTRACT",
       "description": "Extract specific entities from text or range.",
@@ -95,6 +106,16 @@
       "description": "Clean/normalize text using AI for consistent outputs.",
       "parameters": [
         { "name": "textOrRange", "description": "Input text or range.", "type": "any", "dimensionality": "matrix" },
+        { "name": "options", "description": "Optional JSON options (lang, temperature...).", "type": "string", "dimensionality": "scalar", "optional": true }
+      ],
+      "result": { "type": "string", "dimensionality": "matrix" }
+    },
+    {
+      "id": "AI.CONSISTENT",
+      "name": "CONSISTENT",
+      "description": "Harmonize similar values across a range to a single consistent format.",
+      "parameters": [
+        { "name": "textOrRange", "description": "Range of related values to harmonize.", "type": "any", "dimensionality": "matrix" },
         { "name": "options", "description": "Optional JSON options (lang, temperature...).", "type": "string", "dimensionality": "scalar", "optional": true }
       ],
       "result": { "type": "string", "dimensionality": "matrix" }

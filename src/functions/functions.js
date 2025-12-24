@@ -239,6 +239,20 @@ function sysClean(lang = "fr", expectedItems) {
   ].join("\n");
 }
 
+function sysConsistent(lang = "fr", expectedItems) {
+  return [
+    "You harmonize spreadsheet entries that refer to the same real-world value.",
+    `Respond in ${lang}.`,
+    "Return STRICT JSON only (no Markdown, no code fences).",
+    `Return an object with a single key 'items' containing exactly ${expectedItems} strings in the same order as the provided cells.`,
+    "Normalize casing, accents, spacing, and fix obvious typos.",
+    "When several cells refer to the same entity, use ONE consistent, best-written value for all of them.",
+    "Keep outputs aligned with inputs; do not merge or reorder rows.",
+    "If an input is empty or whitespace-only, return an empty string for that position.",
+    "Do not invent new information beyond correcting the given values."
+  ].join("\n");
+}
+
 function sysSummarize(lang = "fr") {
   return [
     "You summarize text for a spreadsheet cell.",
@@ -299,7 +313,19 @@ function sysFormula(lang) {
   ].join("\n");
 }
 
-// ---------- core call wrapper ----------
+  function sysWeb(lang = "fr") {
+    return [
+      "You are a meticulous fact-finding assistant with access to reliable web knowledge.",
+      "Return only one precise, up-to-date factual value plus the best authoritative source URL.",
+      "Do not guess. If the data cannot be confirmed with high confidence, return empty strings for both fields.",
+      `Respond in ${lang}.`,
+      "Return STRICT JSON only (no Markdown, no code fences).",
+      'Schema: {"value": "<concise value>", "source": "https://..."}.',
+      "The value must mirror the source exactly and stay under 80 characters."
+    ].join("\n");
+  }
+
+  // ---------- core call wrapper ----------
 
 async function callGemini({ system, user, options, functionName }) {
   const opt = options || {};
@@ -368,6 +394,59 @@ export async function ASK(prompt, contextRange, options) {
 
     if (!res.ok) return errorCode(res.code);
     return truncateForCell(res.text);
+  } catch (e) {
+    return errorCode(ERR.API_ERROR);
+  }
+}
+
+export async function WEB(prompt, focusRange, showSource) {
+  try {
+    const query = normalizeNewlines(coerceToTextOrJoin2D(prompt)).trim();
+    if (!query) return errorCode(ERR.BAD_INPUT);
+
+    const focus = focusRange ? normalizeNewlines(coerceToTextOrJoin2D(focusRange)).trim() : "";
+    const wantsHyperlink = (() => {
+      if (showSource === null || showSource === undefined) return false;
+      if (typeof showSource === "number") return Number(showSource) === 1;
+      const s = safeString(showSource).trim().toLowerCase();
+      if (!s) return false;
+      if (s === "1") return true;
+      return s === "true" || s === "yes" || s === "oui";
+    })();
+
+    const user = [
+      `QUESTION: ${query}`,
+      focus ? `FOCUS / ENTITY: ${focus}` : "",
+      "Return STRICT JSON with the confirmed value and the best source URL.",
+      "If the value cannot be confirmed confidently, return empty strings for both fields."
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    const res = await callGemini({
+      system: sysWeb("fr"),
+      user,
+      options: { temperature: 0.0, responseMimeType: "application/json" },
+      functionName: "AI.WEB"
+    });
+
+    if (!res.ok) return errorCode(res.code);
+
+    const obj = extractJsonObject(res.text);
+    if (!obj || typeof obj.value !== "string") return errorCode(ERR.PARSE_ERROR);
+
+    const value = truncateForCell(safeString(obj.value).trim());
+    const source = safeString(obj.source).trim();
+
+    if (!value) return errorCode(ERR.NOT_FOUND);
+
+    if (wantsHyperlink && source) {
+      const escapedValue = value.replace(/"/g, '""');
+      const escapedUrl = source.replace(/"/g, '""');
+      return `=HYPERLINK("${escapedUrl}";"${escapedValue}")`;
+    }
+
+    return value;
   } catch (e) {
     return errorCode(ERR.API_ERROR);
   }
@@ -551,6 +630,59 @@ export async function CLEAN(text, options) {
     const cleaned = obj.items.map((item) => safeString(item));
     let idx = 0;
     return matrix.map((row) => row.map(() => truncateForCell(cleaned[idx++])));
+  } catch (e) {
+    return errorCode(ERR.API_ERROR);
+  }
+}
+
+export async function CONSISTENT(text, options) {
+  try {
+    const opt = parseOptions(options);
+
+    const matrix = normalizeRangeToMatrix(text);
+    const flatCells = [];
+    for (const row of matrix) {
+      for (const cell of row) {
+        flatCells.push(normalizeNewlines(coerceToTextOrJoin2D(cell)));
+      }
+    }
+
+    if (flatCells.length === 0) return errorCode(ERR.BAD_INPUT);
+
+    const hasContent = flatCells.some((cell) => safeString(cell).trim());
+    if (!hasContent) return matrix.map((row) => row.map(() => ""));
+
+    const userCells = flatCells
+      .map((cell, idx) => `${idx + 1}. ${cell ? cell : "<vide>"}`)
+      .join("\n");
+
+    const lang = opt.lang || "fr";
+    const user = [
+      `You will harmonize ${flatCells.length} cell values for consistent sorting/counting.`,
+      "Cells:",
+      userCells
+    ].join("\n");
+
+    const res = await callGemini({
+      system: sysConsistent(lang, flatCells.length),
+      user,
+      options: {
+        ...opt,
+        temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0,
+        responseMimeType: "application/json"
+      },
+      functionName: "AI.CONSISTENT"
+    });
+
+    if (!res.ok) return errorCode(res.code);
+
+    const obj = extractJsonObject(res.text);
+    if (!obj || !Array.isArray(obj.items)) return errorCode(ERR.PARSE_ERROR);
+    if (obj.items.length !== flatCells.length) return errorCode(ERR.PARSE_ERROR);
+
+    const normalized = obj.items.map((item) => safeString(item));
+    let idx = 0;
+    return matrix.map((row) => row.map(() => truncateForCell(normalized[idx++])));
   } catch (e) {
     return errorCode(ERR.API_ERROR);
   }
@@ -848,6 +980,7 @@ function registerCustomFunctions() {
 
   const pairs = [
     ["AI.ASK", ASK],
+    ["AI.WEB", WEB],
     ["AI.EXTRACT", EXTRACT],
     ["AI.CLASSIFY", CLASSIFY],
     ["AI.TRANSLATE", TRANSLATE],
@@ -855,6 +988,7 @@ function registerCustomFunctions() {
     ["AI.FILL", FILL],
     ["AI.FORMULA", FORMULA],
     ["AI.COUNT", COUNT],
+    ["AI.CONSISTENT", CONSISTENT],
     ["AI.CLEAN", CLEAN],
     ["AI.SUMMARIZE", SUMMARIZE],
     ["AI.KEYSTATUS", KEY_STATUS],
