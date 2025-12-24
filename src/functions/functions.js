@@ -349,6 +349,7 @@ async function callGemini({ system, user, options, functionName }) {
 
   const cacheMode = typeof opt.cache === "string" ? opt.cache : DEFAULTS.cache;
   const cacheTtlSec = typeof opt.cacheTtlSec === "number" ? clamp(opt.cacheTtlSec, 0, 24 * 3600, DEFAULTS.cacheTtlSec) : DEFAULTS.cacheTtlSec;
+  const cacheOnly = Boolean(opt.cacheOnly);
 
   const res = await geminiGenerate({
     model: opt.model,
@@ -357,6 +358,7 @@ async function callGemini({ system, user, options, functionName }) {
     generationConfig: { temperature, maxOutputTokens: maxTokens },
     cache: cacheMode,
     cacheTtlSec,
+    cacheOnly,
     timeoutMs,
     retry,
     responseMimeType: opt.responseMimeType, // Support de l'option JSON
