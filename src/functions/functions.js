@@ -184,16 +184,16 @@ function sysSummarize(lang = "fr") {
   ].join("\n");
 }
 
-function sysExtract(fields, lang = "fr") {
+function sysExtract(instruction, lang = "fr") {
   return [
-    "You extract structured fields from unstructured text.",
+    "You are an expert extraction engine.",
+    `Goal: Extract all entities matching this description: "${instruction}"`,
     `Respond in ${lang}.`,
     "Return STRICT JSON only (no Markdown, no code fences).",
-    "Return an object with ONLY these keys:",
-    fields.join(", "),
-    "If a value is missing, use null.",
-    "Dates should be ISO 8601 if possible.",
-    "Numbers must be numbers (no currency symbols)."
+    "Return an object with a single key 'items' which is an array of strings.",
+    "Example: { \"items\": [\"match1\", \"match2\"] }",
+    "If nothing found, return { \"items\": [] }.",
+    "Extract exact values from the text."
   ].join("\n");
 }
 
@@ -399,48 +399,20 @@ export async function SUMMARIZE(textOrRange, options) {
   }
 }
 
-// --- EXTRACT helpers ---
-
-function parseSchemaOrFields(schemaOrFields) {
-  const raw = safeString(schemaOrFields).trim();
-  if (!raw) return { ok: false, fields: [], types: {} };
-
-  if (raw.startsWith("{") && raw.endsWith("}")) {
-    const p = safeJsonParse(raw);
-    if (p.ok && p.value && typeof p.value === "object" && !Array.isArray(p.value)) {
-      const fields = Object.keys(p.value).map((k) => k.trim()).filter(Boolean);
-      const types = {};
-      for (const k of fields) {
-        const t = p.value[k];
-        types[k] = typeof t === "string" ? t : safeString(t);
-      }
-      return { ok: fields.length > 0, fields, types };
-    }
-  }
-
-  const fields = raw
-    .split(/[,;\n]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-  return { ok: fields.length > 0, fields, types: {} };
-}
-
-export async function EXTRACT(text, schemaOrFields, options) {
+export async function EXTRACT(instruction, textOrRange, options) {
   try {
     const opt = parseOptions(options);
     const lang = opt.lang || "fr";
-    const schema = parseSchemaOrFields(schemaOrFields);
-    if (!schema.ok) return errorCode(ERR.BAD_SCHEMA);
 
-    const raw = normalizeNewlines(coerceToTextOrJoin2D(text));
-    if (!raw.trim()) {
-      if (opt.return === "json") return "{}";
-      return schema.fields.map((f) => [f, ""]);
-    }
+    const instr = safeString(instruction).trim();
+    if (!instr) return errorCode(ERR.BAD_INPUT);
+
+    // Flatten textOrRange into a single text block
+    const raw = normalizeNewlines(coerceToTextOrJoin2D(textOrRange));
+    if (!raw.trim()) return "";
 
     const res = await callGemini({
-      system: sysExtract(schema.fields, lang),
+      system: sysExtract(instr, lang),
       user: raw,
       options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 },
       functionName: "AI.EXTRACT"
@@ -449,22 +421,13 @@ export async function EXTRACT(text, schemaOrFields, options) {
     if (!res.ok) return errorCode(res.code);
 
     const obj = extractJsonObject(res.text);
-    if (!obj) return errorCode(ERR.PARSE_ERROR);
+    if (!obj || !Array.isArray(obj.items)) return errorCode(ERR.PARSE_ERROR);
 
-    if (opt.return === "json") {
-      try {
-        return truncateForCell(JSON.stringify(obj));
-      } catch {
-        return errorCode(ERR.PARSE_ERROR);
-      }
-    }
+    const items = obj.items.map(safeString).filter(Boolean);
+    if (items.length === 0) return ""; // Or maybe a message? Empty string is standard for empty result in Excel.
 
-    const out = [];
-    for (const f of schema.fields) {
-      const v = obj[f];
-      out.push([f, v === null || v === undefined ? "" : safeString(v)]);
-    }
-    return out;
+    // Return as a vertical spill
+    return items.map(v => [truncateForCell(v)]);
   } catch (e) {
     return errorCode(ERR.API_ERROR);
   }
