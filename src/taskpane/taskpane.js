@@ -2,7 +2,7 @@
 
 import { getApiKey, setApiKey, clearApiKey, getMaxTokens, setMaxTokens, storageBackend } from "../shared/storage";
 import { geminiMinimalTest } from "../shared/gemini";
-import { getDiagnosticsSnapshot } from "../shared/diagnostics";
+import { getDiagnosticsSnapshot, resetDiagnosticsLogs } from "../shared/diagnostics";
 
 let els = {};
 
@@ -33,6 +33,11 @@ function formatTime(iso) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute:'2-digit', second:'2-digit' });
 }
 
+function formatLatencySeconds(latencyMs) {
+  const seconds = (latencyMs || 0) / 1000;
+  return `${seconds.toFixed(2)}s`;
+}
+
 function getTokenColorClass(total) {
   if (total < 500) return 'low';
   if (total < 2000) return 'medium';
@@ -58,6 +63,88 @@ function escapeHtml(text) {
     .replace(/'/g, "&#039;");
 }
 
+function computeUsageSeries(logs) {
+  const bucketCount = 12; // 5 minutes per bucket over the last hour
+  const now = Date.now();
+  const hourAgo = now - 60 * 60 * 1000;
+  const bucketMs = (60 * 60 * 1000) / bucketCount;
+  const buckets = Array.from({ length: bucketCount }, (_, idx) => ({
+    ts: hourAgo + idx * bucketMs,
+    value: 0
+  }));
+
+  logs
+    .filter(l => new Date(l.at).getTime() >= hourAgo)
+    .forEach(log => {
+      const ts = new Date(log.at).getTime();
+      const bucketIndex = Math.min(bucketCount - 1, Math.floor((ts - hourAgo) / bucketMs));
+      const totalTokens = (log.inputTokens || 0) + (log.outputTokens || 0);
+      buckets[bucketIndex].value += totalTokens;
+    });
+
+  return buckets;
+}
+
+function renderUsageChart(logs) {
+  if (!els.usageChart) return;
+
+  const ctx = els.usageChart.getContext('2d');
+  if (!ctx) return;
+
+  const width = els.usageChart.clientWidth || 360;
+  const height = els.usageChart.clientHeight || 160;
+  els.usageChart.width = width;
+  els.usageChart.height = height;
+
+  ctx.clearRect(0, 0, width, height);
+
+  const series = computeUsageSeries(logs || []);
+  const maxVal = Math.max(...series.map(s => s.value), 1);
+  const padding = 24;
+  const usableWidth = width - padding * 2;
+  const usableHeight = height - padding * 2;
+
+  ctx.strokeStyle = '#e5e5e5';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padding, height - padding);
+  ctx.lineTo(width - padding, height - padding);
+  ctx.stroke();
+
+  if (series.every(s => s.value === 0)) {
+    ctx.fillStyle = '#999';
+    ctx.font = '12px "Segoe UI", Arial, sans-serif';
+    ctx.fillText('Aucune activité sur la dernière heure', padding, height / 2);
+    return;
+  }
+
+  ctx.strokeStyle = '#0f6cbd';
+  ctx.fillStyle = 'rgba(15, 108, 189, 0.12)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+
+  series.forEach((bucket, idx) => {
+    const x = padding + (usableWidth / (series.length - 1)) * idx;
+    const y = padding + (1 - bucket.value / maxVal) * usableHeight;
+    if (idx === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  });
+
+  ctx.stroke();
+
+  ctx.lineTo(width - padding, height - padding);
+  ctx.lineTo(padding, height - padding);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = '#555';
+  ctx.font = '10px "Segoe UI", Arial, sans-serif';
+  ctx.fillText('Tokens (dernière heure)', padding, padding - 6);
+}
+
 function updateLogsUI() {
   try {
     const snap = getDiagnosticsSnapshot();
@@ -68,6 +155,8 @@ function updateLogsUI() {
 
     if (els.totalTokens) els.totalTokens.textContent = total.toLocaleString();
     if (els.estCost) els.estCost.textContent = '$' + cost.toFixed(5);
+
+    renderUsageChart(snap.logs || []);
 
     // 2. Liste Logs
     const list = els.logList;
@@ -120,7 +209,7 @@ function updateLogsUI() {
 
                 <!-- Right: Status -->
                 <div class="log-status">
-                    <div class="log-latency">${log.latencyMs}ms</div>
+                    <div class="log-latency">${formatLatencySeconds(log.latencyMs)}</div>
                     ${cacheBadge}
                     ${errBadge}
                 </div>
@@ -253,6 +342,14 @@ async function onTest() {
   }
 }
 
+function onResetLogs() {
+  const confirmed = window.confirm('Réinitialiser les logs et les coûts ?');
+  if (!confirmed) return;
+
+  resetDiagnosticsLogs();
+  updateLogsUI();
+}
+
 function wireUi() {
   els = {
     apiKeyInput: $("apiKeyInput"),
@@ -269,6 +366,8 @@ function wireUi() {
     estCost: $("estCost"),
     logList: $("logList"),
     refreshLogsBtn: $("refreshLogsBtn"),
+    resetLogsBtn: $("resetLogsBtn"),
+    usageChart: $("usageChart"),
     // Features UI
     featuresHeader: $("featuresHeader"),
     featuresContent: $("featuresContent"),
@@ -281,6 +380,10 @@ function wireUi() {
 
   if(els.refreshLogsBtn) {
     els.refreshLogsBtn.addEventListener("click", updateLogsUI);
+  }
+
+  if (els.resetLogsBtn) {
+    els.resetLogsBtn.addEventListener("click", onResetLogs);
   }
 
   els.apiKeyInput.addEventListener("keydown", (ev) => {

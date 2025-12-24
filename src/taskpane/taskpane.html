@@ -159,11 +159,19 @@
                 </div>
             </div>
 
+            <div class="chart-box">
+                <div class="chart-header">Usage dernière heure</div>
+                <canvas id="usageChart" class="usage-chart" height="160"></canvas>
+            </div>
+
             <div class="log-list" id="logList">
                 <div style="padding:15px; text-align:center; color:#999; font-style:italic;">Aucune requête récente</div>
             </div>
 
-            <button id="refreshLogsBtn" class="refresh-btn">Rafraîchir les logs</button>
+            <div class="log-actions">
+                <button id="refreshLogsBtn" class="refresh-btn">Rafraîchir les logs</button>
+                <button id="resetLogsBtn" class="refresh-btn danger">Réinitialiser les logs</button>
+            </div>
         </div>
     </div>
 
