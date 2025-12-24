@@ -72,6 +72,77 @@
     .badge.cached { background: #dff6dd; color: #107c10; border: 1px solid #bce2be; }
     .badge.err { background: #fde7e9; color: #a4262c; border: 1px solid #fde7e9; }
 
+    /* Features */
+    .feature-note {
+        background: linear-gradient(135deg, #f4f8ff, #f0f7ff);
+        border: 1px solid #d6e8ff;
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: 12px;
+        color: #1f3b57;
+        margin-bottom: 12px;
+    }
+
+    .feature-grid {
+        display: grid;
+        gap: 10px;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    }
+
+    .feature-card {
+        background: #fff;
+        border: 1px solid #e8eef5;
+        border-radius: 10px;
+        padding: 12px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .feature-title {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-weight: 700;
+        color: #0f6cbd;
+        font-size: 14px;
+    }
+
+    .feature-pill {
+        background: #e8f3ff;
+        color: #0f6cbd;
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+    }
+
+    .feature-desc {
+        margin: 0;
+        color: #333;
+        font-size: 12px;
+    }
+
+    .feature-usage {
+        margin: 0;
+        padding-left: 16px;
+        color: #444;
+        font-size: 11.5px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .feature-usage code {
+        background: #f7f9fb;
+        border: 1px solid #e1e7ef;
+        border-radius: 4px;
+        padding: 1px 4px;
+        font-size: 11px;
+    }
+
     /* Code Expandable */
     .log-code-toggle {
         font-size: 10px; color: #0078d4; cursor: pointer; text-decoration: underline; margin-top: 2px;
@@ -133,14 +204,154 @@
                 Features <span id="featuresToggle">▼</span>
             </h2>
             <div id="featuresContent" style="display:none;">
-                <p><strong>=AI.ASK(prompt, [context], [options])</strong><br>Pose une question libre.</p>
-                <p><strong>=AI.TABLE(prompt, [context], [options])</strong><br>Génère un tableau de données.</p>
-                <p><strong>=AI.EXTRACT(instruction, range, [options])</strong><br>Extrait des entités.</p>
-                <p><strong>=AI.FILL(examples, target, instr, [options])</strong><br>Remplit par l'exemple.</p>
-                <p><strong>=AI.SUMMARIZE(text, [options])</strong><br>Résume un texte.</p>
-                <p><strong>=AI.TRANSLATE(text, lang, [options])</strong><br>Traduit un texte.</p>
-                <p><strong>=AI.CLASSIFY(text, labels, [options])</strong><br>Classifie un texte.</p>
-                <p><strong>=AI.CLEAN(text, [options])</strong><br>Nettoie le texte.</p>
+                <div class="feature-note">
+                    Les fonctions acceptent un paramètre <code>options</code> JSON (par ex. <code>{ "lang": "fr", "maxTokens": 1024, "temperature": 0.2 }</code>) pour contrôler la langue, le ton ou le cache.
+                </div>
+
+                <div class="feature-grid">
+                    <div class="feature-card">
+                        <div class="feature-title">
+                            <span>=AI.ASK</span>
+                            <span class="feature-pill">Q&A</span>
+                        </div>
+                        <p class="feature-desc">Pose une question libre avec contexte facultatif pour obtenir une réponse textuelle nette.</p>
+                        <ul class="feature-usage">
+                            <li><strong>Syntaxe :</strong> <code>=AI.ASK(prompt, [contexte], [options])</code></li>
+                            <li><strong>Utilisation :</strong> ajoutez une plage en contexte pour guider la réponse (FAQ, extraits).</li>
+                            <li><strong>Retour :</strong> texte court prêt à coller dans une cellule.</li>
+                        </ul>
+                    </div>
+
+                    <div class="feature-card">
+                        <div class="feature-title">
+                            <span>=AI.TABLE</span>
+                            <span class="feature-pill">Données</span>
+                        </div>
+                        <p class="feature-desc">Génère un tableau structuré en plusieurs lignes/colonnes à partir d'un prompt.</p>
+                        <ul class="feature-usage">
+                            <li><strong>Syntaxe :</strong> <code>=AI.TABLE(prompt, [contexte], [options])</code></li>
+                            <li><strong>Utilisation :</strong> précisez le format attendu (colonnes, unités, volume) dans le prompt.</li>
+                            <li><strong>Retour :</strong> matrice prête à être étendue dans la feuille.</li>
+                        </ul>
+                    </div>
+
+                    <div class="feature-card">
+                        <div class="feature-title">
+                            <span>=AI.EXTRACT</span>
+                            <span class="feature-pill">Extraction</span>
+                        </div>
+                        <p class="feature-desc">Repère et extrait des entités depuis une plage (e-mails, dates, montants, etc.).</p>
+                        <ul class="feature-usage">
+                            <li><strong>Syntaxe :</strong> <code>=AI.EXTRACT(instruction, plage, [options])</code></li>
+                            <li><strong>Utilisation :</strong> indiquez l'entité recherchée (« e-mail pro », « montant TTC », etc.).</li>
+                            <li><strong>Retour :</strong> colonne nettoyée avec une valeur par ligne.</li>
+                        </ul>
+                    </div>
+
+                    <div class="feature-card">
+                        <div class="feature-title">
+                            <span>=AI.FILL</span>
+                            <span class="feature-pill">Par exemple</span>
+                        </div>
+                        <p class="feature-desc">Génère des complétions basées sur vos exemples et les cibles à remplir.</p>
+                        <ul class="feature-usage">
+                            <li><strong>Syntaxe :</strong> <code>=AI.FILL(exemples, cibles, instruction, [options])</code></li>
+                            <li><strong>Utilisation :</strong> fournissez quelques lignes d'exemples alignées sur les cibles.</li>
+                            <li><strong>Retour :</strong> liste verticale correspondant aux lignes cibles.</li>
+                        </ul>
+                    </div>
+
+                    <div class="feature-card">
+                        <div class="feature-title">
+                            <span>=AI.SUMMARIZE</span>
+                            <span class="feature-pill">Synthèse</span>
+                        </div>
+                        <p class="feature-desc">Condense un texte ou une plage en quelques phrases ou puces.</p>
+                        <ul class="feature-usage">
+                            <li><strong>Syntaxe :</strong> <code>=AI.SUMMARIZE(texte, [options])</code></li>
+                            <li><strong>Utilisation :</strong> définissez longueur ou style via <code>options</code> (ex. <code>{ "lang": "en" }</code>).</li>
+                            <li><strong>Retour :</strong> résumé concis limité aux caractères de cellule.</li>
+                        </ul>
+                    </div>
+
+                    <div class="feature-card">
+                        <div class="feature-title">
+                            <span>=AI.TRANSLATE</span>
+                            <span class="feature-pill">Langues</span>
+                        </div>
+                        <p class="feature-desc">Traduit un texte vers la langue cible en conservant le sens.</p>
+                        <ul class="feature-usage">
+                            <li><strong>Syntaxe :</strong> <code>=AI.TRANSLATE(texte, langue, [options])</code></li>
+                            <li><strong>Utilisation :</strong> passez un code de langue (« en », « es »...) ou un nom (« français »).</li>
+                            <li><strong>Retour :</strong> texte traduit sans guillemets ni balises.</li>
+                        </ul>
+                    </div>
+
+                    <div class="feature-card">
+                        <div class="feature-title">
+                            <span>=AI.CLASSIFY</span>
+                            <span class="feature-pill">Etiquettes</span>
+                        </div>
+                        <p class="feature-desc">Attribue une étiquette unique parmi une liste fournie.</p>
+                        <ul class="feature-usage">
+                            <li><strong>Syntaxe :</strong> <code>=AI.CLASSIFY(texte, labels, [options])</code></li>
+                            <li><strong>Utilisation :</strong> fournissez les labels sous forme de plage ou de chaîne séparée par « | ».</li>
+                            <li><strong>Retour :</strong> une seule étiquette (ou <code>UNKNOWN</code> en cas de doute).</li>
+                        </ul>
+                    </div>
+
+                    <div class="feature-card">
+                        <div class="feature-title">
+                            <span>=AI.CLEAN</span>
+                            <span class="feature-pill">Nettoyage</span>
+                        </div>
+                        <p class="feature-desc">Nettoie et normalise un texte (espaces, ponctuation, e-mails obfusqués…).</p>
+                        <ul class="feature-usage">
+                            <li><strong>Syntaxe :</strong> <code>=AI.CLEAN(texte, [options])</code></li>
+                            <li><strong>Utilisation :</strong> idéal pour préparer des données avant analyse ou export.</li>
+                            <li><strong>Retour :</strong> texte épuré et homogène.</li>
+                        </ul>
+                    </div>
+
+                    <div class="feature-card">
+                        <div class="feature-title">
+                            <span>=AI.FORMULA</span>
+                            <span class="feature-pill">Formules</span>
+                        </div>
+                        <p class="feature-desc">Génère une formule Excel valide à partir d'une consigne et d'un contexte.</p>
+                        <ul class="feature-usage">
+                            <li><strong>Syntaxe :</strong> <code>=AI.FORMULA(instruction, [contexte], [options])</code></li>
+                            <li><strong>Utilisation :</strong> décrivez le résultat attendu ; ajoutez une plage pour guider la structure.</li>
+                            <li><strong>Retour :</strong> formule commençant par « = », prête à être remplie.</li>
+                        </ul>
+                    </div>
+
+                    <div class="feature-card">
+                        <div class="feature-title">
+                            <span>=AI.KEYSTATUS</span>
+                            <span class="feature-pill">Diagnostic</span>
+                        </div>
+                        <p class="feature-desc">Vérifie rapidement si la clé API est enregistrée côté add-in.</p>
+                        <ul class="feature-usage">
+                            <li><strong>Syntaxe :</strong> <code>=AI.KEYSTATUS()</code></li>
+                            <li><strong>Utilisation :</strong> utile dans un tableau de bord pour suivre la configuration.</li>
+                            <li><strong>Retour :</strong> <code>OK</code> ou <code>MISSING</code>.</li>
+                        </ul>
+                    </div>
+
+                    <div class="feature-card">
+                        <div class="feature-title">
+                            <span>=AI.TEST</span>
+                            <span class="feature-pill">Ping</span>
+                        </div>
+                        <p class="feature-desc">Déclenche un test minimal vers l'API pour vérifier la connectivité.</p>
+                        <ul class="feature-usage">
+                            <li><strong>Syntaxe :</strong> <code>=AI.TEST()</code></li>
+                            <li><strong>Utilisation :</strong> insérez-le dans une cellule pour surveiller la disponibilité.</li>
+                            <li><strong>Retour :</strong> <code>OK</code> en cas de succès ou un code d'erreur.</li>
+                        </ul>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
