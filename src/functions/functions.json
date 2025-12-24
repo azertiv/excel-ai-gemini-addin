@@ -91,6 +91,16 @@
       "result": { "type": "string", "dimensionality": "scalar" }
     },
     {
+      "id": "AI.COUNT",
+      "name": "COUNT",
+      "description": "Count how many cells in a range match a given value (case-insensitive).",
+      "parameters": [
+        { "name": "range", "description": "Range of cells to inspect.", "type": "any", "dimensionality": "matrix" },
+        { "name": "value", "description": "Value to count (e.g., 'Homme').", "type": "any", "dimensionality": "scalar" }
+      ],
+      "result": { "type": "number", "dimensionality": "scalar" }
+    },
+    {
       "id": "AI.CLEAN",
       "name": "CLEAN",
       "description": "Clean/normalize text using AI for consistent outputs.",

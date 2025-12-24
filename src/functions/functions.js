@@ -160,6 +160,11 @@ function truncateForCell(s, maxChars = LIMITS.MAX_CELL_CHARS) {
   return t.slice(0, maxChars) + "\n…(truncated)";
 }
 
+function normalizeMatrixInput(value) {
+  if (Array.isArray(value)) return normalizeRangeToMatrix(value);
+  return [[value]];
+}
+
 function extractJsonObject(text) {
   const s = String(text || "").trim();
   if (!s) return null;
@@ -946,6 +951,30 @@ export async function FORMULA(instruction, contextRange, options) {
   }
 }
 
+export function COUNT(range, valueToCount) {
+  try {
+    const matrix = normalizeMatrixInput(range);
+    const target = safeString(valueToCount).trim();
+    if (!target) return 0;
+
+    const targetLower = target.toLowerCase();
+    let total = 0;
+
+    for (const row of matrix) {
+      if (!Array.isArray(row)) continue;
+      for (const cell of row) {
+        const candidate = safeString(cell).trim();
+        if (!candidate) continue;
+        if (candidate.toLowerCase() === targetLower) total += 1;
+      }
+    }
+
+    return total;
+  } catch (e) {
+    return errorCode(ERR.API_ERROR);
+  }
+}
+
 function registerCustomFunctions() {
   if (typeof CustomFunctions === "undefined" || typeof CustomFunctions.associate !== "function") return false;
 
@@ -958,6 +987,7 @@ function registerCustomFunctions() {
     ["AI.TABLE", TABLE],
     ["AI.FILL", FILL],
     ["AI.FORMULA", FORMULA],
+    ["AI.COUNT", COUNT],
     ["AI.CONSISTENT", CONSISTENT],
     ["AI.CLEAN", CLEAN],
     ["AI.SUMMARIZE", SUMMARIZE],
