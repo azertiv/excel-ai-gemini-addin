@@ -213,13 +213,20 @@ function sysClassify(labels, lang = "en") {
   ].join("\n");
 }
 
-function sysClean(lang = "fr") {
-  return [
-    "You are a text normalizer for spreadsheet cells.",
-    `Respond in ${lang}.`,
-    "Return only the cleaned text.",
-    "No quotes. No explanations."
-  ].join("\n");
+function sysClean(lang = "fr", expectedItems) {
+  const base = ["You are a text normalizer for spreadsheet cells.", `Respond in ${lang}.`];
+
+  if (typeof expectedItems === "number" && expectedItems > 1) {
+    base.push(
+      "Return STRICT JSON only (no Markdown, no code fences).",
+      `Return an object with a single key 'items' which is an array of exactly ${expectedItems} strings, preserving order.`,
+      "Each output string corresponds to the cleaned version of the cell at the same index."
+    );
+  } else {
+    base.push("Return only the cleaned text.", "No quotes. No explanations.");
+  }
+
+  return base.join("\n");
 }
 
 function sysSummarize(lang = "fr") {
@@ -404,33 +411,89 @@ export async function CLASSIFY(text, labels, options) {
   }
 }
 
-export async function CLEAN(text, options) {
+export async function CLEAN(textOrRange, options) {
   try {
     const opt = parseOptions(options);
     const mode = (opt.mode || "basic").toLowerCase();
 
-    const raw = normalizeNewlines(coerceToTextOrJoin2D(text));
-    if (!raw.trim()) return "";
+    const matrix = normalizeRangeToMatrix(textOrRange);
+    const flatCells = [];
+    for (const row of matrix) {
+      for (const cell of row) flatCells.push(normalizeNewlines(coerceToTextOrJoin2D(cell)));
+    }
 
-    if (mode === "basic") {
+    if (flatCells.length === 0) return "";
+
+    const hasMultipleCells = flatCells.length > 1;
+
+    const cleanLocally = (raw) => {
+      if (!raw.trim()) return "";
       let s = raw.trim();
       s = s.replace(/[ \t]+/g, " ");
       s = s.replace(/\n{3,}/g, "\n\n");
       if (opt.case === "upper") s = s.toUpperCase();
       if (opt.case === "lower") s = s.toLowerCase();
       return truncateForCell(s);
+    };
+
+    if (mode === "basic") {
+      const cleaned = flatCells.map((cell) => cleanLocally(cell));
+      if (!hasMultipleCells) return cleaned[0];
+
+      let idx = 0;
+      return matrix.map((row) => row.map(() => cleaned[idx++]));
     }
 
     const lang = opt.lang || "fr";
+
+    if (!hasMultipleCells) {
+      const raw = flatCells[0];
+      if (!raw.trim()) return "";
+
+      const res = await callGemini({
+        system: sysClean(lang),
+        user: raw,
+        options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 },
+        functionName: "AI.CLEAN"
+      });
+
+      if (!res.ok) return errorCode(res.code);
+      return truncateForCell(res.text);
+    }
+
+    const hasNonEmptyCell = flatCells.some((cell) => cell.trim());
+    if (!hasNonEmptyCell) return matrix.map((row) => row.map(() => ""));
+
+    const userCells = flatCells.map((cell, idx) => `${idx + 1}. ${cell ? cell : "<empty>"}`).join("\n");
+    const user = [
+      `You will clean ${flatCells.length} independent cell values.`,
+      "Return STRICT JSON only (no Markdown, no code fences).",
+      `Return an object with a single key 'items' containing exactly ${flatCells.length} strings in the same order as the provided cells.`,
+      "If an input cell is empty, return an empty string in the corresponding position.",
+      "Normalize whitespace (trim, collapse multiple spaces, reduce long blank line sequences).",
+      opt.case === "upper" ? "Convert outputs to uppercase." : opt.case === "lower" ? "Convert outputs to lowercase." : "",
+      "Cells:",
+      userCells
+    ]
+      .filter(Boolean)
+      .join("\n");
+
     const res = await callGemini({
-      system: sysClean(lang),
-      user: raw,
+      system: sysClean(lang, flatCells.length),
+      user,
       options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 },
       functionName: "AI.CLEAN"
     });
 
     if (!res.ok) return errorCode(res.code);
-    return truncateForCell(res.text);
+
+    const obj = extractJsonObject(res.text);
+    if (!obj || !Array.isArray(obj.items)) return errorCode(ERR.PARSE_ERROR);
+    if (obj.items.length !== flatCells.length) return errorCode(ERR.PARSE_ERROR);
+
+    const cleaned = obj.items.map((item) => cleanLocally(safeString(item)));
+    let idx = 0;
+    return matrix.map((row) => row.map(() => cleaned[idx++]));
   } catch (e) {
     return errorCode(ERR.API_ERROR);
   }
