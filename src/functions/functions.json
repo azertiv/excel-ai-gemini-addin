@@ -90,6 +90,16 @@
       "result": { "type": "string", "dimensionality": "matrix" }
     },
     {
+      "id": "AI.CONSISTENT",
+      "name": "CONSISTENT",
+      "description": "Harmonize similar values across a range to a single consistent format.",
+      "parameters": [
+        { "name": "textOrRange", "description": "Range of related values to harmonize.", "type": "any", "dimensionality": "matrix" },
+        { "name": "options", "description": "Optional JSON options (lang, temperature...).", "type": "string", "dimensionality": "scalar", "optional": true }
+      ],
+      "result": { "type": "string", "dimensionality": "matrix" }
+    },
+    {
       "id": "AI.SUMMARIZE",
       "name": "SUMMARIZE",
       "description": "Summarize text or a range into bullet points (one cell).",

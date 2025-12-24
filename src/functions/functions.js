@@ -234,6 +234,20 @@ function sysClean(lang = "fr", expectedItems) {
   ].join("\n");
 }
 
+function sysConsistent(lang = "fr", expectedItems) {
+  return [
+    "You harmonize spreadsheet entries that refer to the same real-world value.",
+    `Respond in ${lang}.`,
+    "Return STRICT JSON only (no Markdown, no code fences).",
+    `Return an object with a single key 'items' containing exactly ${expectedItems} strings in the same order as the provided cells.`,
+    "Normalize casing, accents, spacing, and fix obvious typos.",
+    "When several cells refer to the same entity, use ONE consistent, best-written value for all of them.",
+    "Keep outputs aligned with inputs; do not merge or reorder rows.",
+    "If an input is empty or whitespace-only, return an empty string for that position.",
+    "Do not invent new information beyond correcting the given values."
+  ].join("\n");
+}
+
 function sysSummarize(lang = "fr") {
   return [
     "You summarize text for a spreadsheet cell.",
@@ -551,6 +565,59 @@ export async function CLEAN(text, options) {
   }
 }
 
+export async function CONSISTENT(text, options) {
+  try {
+    const opt = parseOptions(options);
+
+    const matrix = normalizeRangeToMatrix(text);
+    const flatCells = [];
+    for (const row of matrix) {
+      for (const cell of row) {
+        flatCells.push(normalizeNewlines(coerceToTextOrJoin2D(cell)));
+      }
+    }
+
+    if (flatCells.length === 0) return errorCode(ERR.BAD_INPUT);
+
+    const hasContent = flatCells.some((cell) => safeString(cell).trim());
+    if (!hasContent) return matrix.map((row) => row.map(() => ""));
+
+    const userCells = flatCells
+      .map((cell, idx) => `${idx + 1}. ${cell ? cell : "<vide>"}`)
+      .join("\n");
+
+    const lang = opt.lang || "fr";
+    const user = [
+      `You will harmonize ${flatCells.length} cell values for consistent sorting/counting.`,
+      "Cells:",
+      userCells
+    ].join("\n");
+
+    const res = await callGemini({
+      system: sysConsistent(lang, flatCells.length),
+      user,
+      options: {
+        ...opt,
+        temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0,
+        responseMimeType: "application/json"
+      },
+      functionName: "AI.CONSISTENT"
+    });
+
+    if (!res.ok) return errorCode(res.code);
+
+    const obj = extractJsonObject(res.text);
+    if (!obj || !Array.isArray(obj.items)) return errorCode(ERR.PARSE_ERROR);
+    if (obj.items.length !== flatCells.length) return errorCode(ERR.PARSE_ERROR);
+
+    const normalized = obj.items.map((item) => safeString(item));
+    let idx = 0;
+    return matrix.map((row) => row.map(() => truncateForCell(normalized[idx++])));
+  } catch (e) {
+    return errorCode(ERR.API_ERROR);
+  }
+}
+
 export async function SUMMARIZE(textOrRange, options) {
   try {
     const opt = parseOptions(options);
@@ -825,6 +892,7 @@ function registerCustomFunctions() {
     ["AI.TABLE", TABLE],
     ["AI.FILL", FILL],
     ["AI.FORMULA", FORMULA],
+    ["AI.CONSISTENT", CONSISTENT],
     ["AI.CLEAN", CLEAN],
     ["AI.SUMMARIZE", SUMMARIZE],
     ["AI.KEYSTATUS", KEY_STATUS],
