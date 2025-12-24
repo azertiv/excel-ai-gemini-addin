@@ -394,23 +394,76 @@ export async function CLASSIFY(text, labels, options) {
     const labs = flattenLabels(labels);
     if (!labs.length) return errorCode(ERR.BAD_INPUT);
 
-    const system = sysClassify(labs, lang);
-    const user = [
-      "TEXT:",
-      normalizeNewlines(coerceToTextOrJoin2D(text)),
-      "",
-      `Return only one label. If confidence < ${threshold}, return UNKNOWN.`
+    const matrix = normalizeRangeToMatrix(text);
+    const flatCells = [];
+    for (const row of matrix) {
+      for (const cell of row) {
+        flatCells.push(normalizeNewlines(coerceToTextOrJoin2D(cell)));
+      }
+    }
+
+    if (flatCells.length === 0) return errorCode(ERR.BAD_INPUT);
+
+    const normalizeLabel = (value) => {
+      const raw = safeString(value).trim();
+      if (!raw) return "UNKNOWN";
+      if (raw.toUpperCase() === "UNKNOWN") return "UNKNOWN";
+      const match = labs.find((l) => l.toLowerCase() === raw.toLowerCase());
+      return match || "UNKNOWN";
+    };
+
+    if (flatCells.length === 1) {
+      const raw = flatCells[0];
+      const system = sysClassify(labs, lang);
+      const user = [
+        "TEXT:",
+        raw,
+        "",
+        `Return only one label. If confidence < ${threshold}, return UNKNOWN.`
+      ].join("\n");
+
+      const res = await callGemini({ system, user, options: opt, functionName: "AI.CLASSIFY" });
+      if (!res.ok) return errorCode(res.code);
+
+      return normalizeLabel(res.text);
+    }
+
+    const hasContent = flatCells.some((cell) => safeString(cell).trim());
+    if (!hasContent) return matrix.map((row) => row.map(() => "UNKNOWN"));
+
+    const userCells = flatCells
+      .map((cell, idx) => `${idx + 1}. ${cell ? cell : "<empty>"}`)
+      .join("\n");
+
+    const system = [
+      "You are a strict classifier.",
+      `You will classify ${flatCells.length} independent cell values.`,
+      `Labels: ${labs.join(" | ")}`,
+      `If confidence < ${threshold} or information is missing, return exactly: UNKNOWN`,
+      `Respond in ${lang}.`,
+      "Return STRICT JSON only (no Markdown, no code fences).",
+      `Return an object with a single key 'items' containing exactly ${flatCells.length} strings in the same order as the provided cells.`,
+      "Each item must be one of the provided labels or UNKNOWN.",
+      "No explanations."
     ].join("\n");
 
-    const res = await callGemini({ system, user, options: opt, functionName: "AI.CLASSIFY" });
+    const user = ["Cells:", userCells].join("\n");
+
+    const res = await callGemini({
+      system,
+      user,
+      options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 },
+      functionName: "AI.CLASSIFY"
+    });
+
     if (!res.ok) return errorCode(res.code);
 
-    const out = normalizeNewlines(res.text).trim();
-    const outUpper = out.toUpperCase();
-    if (outUpper === "UNKNOWN") return "UNKNOWN";
+    const obj = extractJsonObject(res.text);
+    if (!obj || !Array.isArray(obj.items)) return errorCode(ERR.PARSE_ERROR);
+    if (obj.items.length !== flatCells.length) return errorCode(ERR.PARSE_ERROR);
 
-    const match = labs.find((l) => l.toLowerCase() === out.toLowerCase());
-    return match || "UNKNOWN";
+    let idx = 0;
+    return matrix.map((row) => row.map(() => normalizeLabel(obj.items[idx++])));
   } catch (e) {
     return errorCode(ERR.API_ERROR);
   }
