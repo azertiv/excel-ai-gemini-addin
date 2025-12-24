@@ -38,6 +38,16 @@ function clamp(n, min, max, fallback) {
   return Math.min(max, Math.max(min, x));
 }
 
+function isValidHttpUrl(url) {
+  if (!url || /\s/.test(url)) return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function errorCode(code) {
   return code || ERR.API_ERROR;
 }
@@ -312,10 +322,12 @@ function sysFormula(lang) {
     return [
       "You are a meticulous fact-finding assistant with access to reliable web knowledge.",
       "Return only one precise, up-to-date factual value plus the best authoritative source URL.",
-      "Do not guess. If the data cannot be confirmed with high confidence, return empty strings for both fields.",
+      "Never fabricate numbers or URLs. Use official or authoritative sources only.",
+      "Match the requested timeframe and scope exactly; ignore partial or approximate figures.",
+      "If the data cannot be confirmed with high confidence, return empty strings and explain why in a 'reason' field.",
       `Respond in ${lang}.`,
       "Return STRICT JSON only (no Markdown, no code fences).",
-      'Schema: {"value": "<concise value>", "source": "https://..."}.',
+      'Schema: {"value": "<concise value>", "source": "https://...", "reason": "<why unavailable>"}.',
       "The value must mirror the source exactly and stay under 80 characters."
     ].join("\n");
   }
@@ -412,8 +424,8 @@ export async function WEB(prompt, focusRange, showSource) {
     const user = [
       `QUESTION: ${query}`,
       focus ? `FOCUS / ENTITY: ${focus}` : "",
-      "Return STRICT JSON with the confirmed value and the best source URL.",
-      "If the value cannot be confirmed confidently, return empty strings for both fields."
+      "Return STRICT JSON with the confirmed value and the best source URL (and an optional reason if unavailable).",
+      "If the value cannot be confirmed confidently, leave value and source empty and provide a brief reason."
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -428,14 +440,25 @@ export async function WEB(prompt, focusRange, showSource) {
     if (!res.ok) return errorCode(res.code);
 
     const obj = extractJsonObject(res.text);
-    if (!obj || typeof obj.value !== "string") return errorCode(ERR.PARSE_ERROR);
+    if (!obj) return errorCode(ERR.PARSE_ERROR);
 
-    const value = truncateForCell(safeString(obj.value).trim());
-    const source = safeString(obj.source).trim();
+    const isValuePrimitive = ["string", "number", "boolean"].includes(typeof obj.value);
+    const isSourcePrimitive = ["string", "number", "boolean"].includes(typeof obj.source);
+    const rawValue = isValuePrimitive ? safeString(obj.value).trim() : "";
+    const source = isSourcePrimitive ? safeString(obj.source).trim() : "";
+    const reason = truncateForCell(safeString(obj.reason).trim());
 
-    if (!value) return errorCode(ERR.NOT_FOUND);
+    const hasValidValue = Boolean(rawValue);
+    const hasValidSource = isValidHttpUrl(source);
 
-    if (wantsHyperlink && source) {
+    if (!hasValidValue || !hasValidSource) {
+      if (reason) return reason;
+      return errorCode(ERR.NOT_FOUND);
+    }
+
+    const value = truncateForCell(rawValue);
+
+    if (wantsHyperlink) {
       const escapedValue = value.replace(/"/g, '""');
       const escapedUrl = source.replace(/"/g, '""');
       return `=HYPERLINK("${escapedUrl}";"${escapedValue}")`;
