@@ -5,40 +5,87 @@ import { geminiMinimalTest } from "../shared/gemini";
 import { getDiagnosticsSnapshot, resetDiagnosticsLogs } from "../shared/diagnostics";
 import { DEFAULTS, TOKEN_LIMITS } from "../shared/constants";
 
+const TOKEN_STEPS = (() => {
+  const steps = [];
+  let value = 64;
+  while (value < TOKEN_LIMITS.MAX) {
+    steps.push(value);
+    value *= 2;
+  }
+  if (!steps.includes(TOKEN_LIMITS.MAX)) steps.push(TOKEN_LIMITS.MAX);
+  return steps;
+})();
+
 let els = {};
 
 function $(id) { return document.getElementById(id); }
 
+function toggleSectionVisibility(targetId, collapsed) {
+  const content = document.getElementById(targetId);
+  if (!content) return;
+
+  const shouldCollapse = typeof collapsed === "boolean"
+    ? collapsed
+    : content.style.display !== "none";
+
+  content.style.display = shouldCollapse ? "none" : "block";
+  content.classList.toggle("collapsed", shouldCollapse);
+
+  const toggles = document.querySelectorAll(`[data-toggle-section="${targetId}"]`);
+  toggles.forEach(btn => {
+    const chevron = btn.querySelector('.chevron');
+    const label = btn.querySelector('.collapse-label');
+    if (chevron) chevron.textContent = shouldCollapse ? '▼' : '▲';
+    if (label) label.textContent = shouldCollapse ? 'Déplier' : 'Réduire';
+  });
+}
+
 function clampTokenValue(raw) {
   const n = Math.floor(Number(raw));
   if (!Number.isFinite(n)) return DEFAULTS.maxTokens;
-  const step = TOKEN_LIMITS.STEP || 1;
-  const rounded = Math.round(n / step) * step;
-  return Math.max(TOKEN_LIMITS.MIN, Math.min(TOKEN_LIMITS.MAX, rounded));
+  let closest = TOKEN_STEPS[0];
+  for (const step of TOKEN_STEPS) {
+    if (Math.abs(step - n) < Math.abs(closest - n)) {
+      closest = step;
+    }
+  }
+  return Math.max(TOKEN_LIMITS.MIN, Math.min(TOKEN_LIMITS.MAX, closest));
+}
+
+function sliderIndexForValue(value) {
+  const v = clampTokenValue(value);
+  const idx = TOKEN_STEPS.indexOf(v);
+  return idx >= 0 ? idx : 0;
+}
+
+function sliderValueToTokens(sliderVal) {
+  const idx = Math.max(0, Math.min(TOKEN_STEPS.length - 1, Number(sliderVal) || 0));
+  return TOKEN_STEPS[idx];
 }
 
 function setTokenUIValue(raw) {
   const v = clampTokenValue(raw);
-  if (els.maxTokensSlider) els.maxTokensSlider.value = String(v);
+  if (els.maxTokensSlider) els.maxTokensSlider.value = String(sliderIndexForValue(v));
   if (els.maxTokensInput) els.maxTokensInput.value = String(v);
   if (els.maxTokensValue) els.maxTokensValue.textContent = String(v);
   return v;
 }
 
-// --- LOGIQUE ONGLETS ---
-function initTabs() {
-  document.querySelectorAll('.tab').forEach(t => {
-    t.addEventListener('click', () => {
-      // Switch active tab
-      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
-      document.querySelectorAll('.tab-content').forEach(x => x.classList.remove('active'));
+function setupSectionToggles() {
+  document.querySelectorAll('[data-toggle-section]').forEach(btn => {
+    const targetId = btn.dataset.toggleSection;
+    const content = document.getElementById(targetId);
+    if (!targetId || !content) return;
 
-      t.classList.add('active');
-      const targetId = t.dataset.target;
-      document.getElementById(targetId).classList.add('active');
+    const startCollapsed = content.dataset.startCollapsed === "true";
+    if (!content.dataset.collapseInit) {
+      toggleSectionVisibility(targetId, startCollapsed);
+      content.dataset.collapseInit = "1";
+    }
 
-      // Refresh specific tab data
-      if(targetId === 'logs') updateLogsUI();
+    btn.addEventListener('click', () => {
+      const currentlyHidden = content.style.display === 'none';
+      toggleSectionVisibility(targetId, !currentlyHidden);
     });
   });
 }
@@ -117,12 +164,33 @@ function renderUsageChart(logs) {
 
   const series = computeUsageSeries(logs || []);
   const maxVal = Math.max(...series.map(s => s.value), 1);
+  const niceMax = (() => {
+    const magnitude = Math.pow(10, Math.floor(Math.log10(maxVal)));
+    const scaled = maxVal / magnitude;
+    if (scaled <= 1.5) return 2 * magnitude;
+    if (scaled <= 3) return 4 * magnitude;
+    if (scaled <= 7.5) return 8 * magnitude;
+    return 10 * magnitude;
+  })();
+
   const padding = 24;
   const usableWidth = width - padding * 2;
   const usableHeight = height - padding * 2;
 
-  ctx.strokeStyle = '#e5e5e5';
+  // Grid
+  ctx.strokeStyle = '#e9eef5';
   ctx.lineWidth = 1;
+  const gridLines = 4;
+  for (let i = 0; i <= gridLines; i++) {
+    const y = padding + (usableHeight / gridLines) * i;
+    ctx.beginPath();
+    ctx.moveTo(padding, y);
+    ctx.lineTo(width - padding, y);
+    ctx.stroke();
+  }
+
+  // X axis baseline
+  ctx.strokeStyle = '#ccd8ea';
   ctx.beginPath();
   ctx.moveTo(padding, height - padding);
   ctx.lineTo(width - padding, height - padding);
@@ -135,14 +203,18 @@ function renderUsageChart(logs) {
     return;
   }
 
+  const gradient = ctx.createLinearGradient(0, padding, 0, height - padding);
+  gradient.addColorStop(0, 'rgba(15, 108, 189, 0.16)');
+  gradient.addColorStop(1, 'rgba(15, 108, 189, 0.02)');
+
   ctx.strokeStyle = '#0f6cbd';
-  ctx.fillStyle = 'rgba(15, 108, 189, 0.12)';
+  ctx.fillStyle = gradient;
   ctx.lineWidth = 2;
   ctx.beginPath();
 
   series.forEach((bucket, idx) => {
     const x = padding + (usableWidth / (series.length - 1)) * idx;
-    const y = padding + (1 - bucket.value / maxVal) * usableHeight;
+    const y = padding + (1 - bucket.value / niceMax) * usableHeight;
     if (idx === 0) {
       ctx.moveTo(x, y);
     } else {
@@ -157,8 +229,30 @@ function renderUsageChart(logs) {
   ctx.closePath();
   ctx.fill();
 
+  // Points
+  ctx.fillStyle = '#0f6cbd';
+  series.forEach((bucket, idx) => {
+    const x = padding + (usableWidth / (series.length - 1)) * idx;
+    const y = padding + (1 - bucket.value / niceMax) * usableHeight;
+    ctx.beginPath();
+    ctx.arc(x, y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Axis labels
   ctx.fillStyle = '#555';
   ctx.font = '10px "Segoe UI", Arial, sans-serif';
+  const labels = [
+    { text: '-60m', x: padding },
+    { text: '-30m', x: padding + usableWidth / 2 },
+    { text: 'Maintenant', x: width - padding }
+  ];
+  labels.forEach((l, idx) => {
+    ctx.textAlign = idx === 0 ? 'left' : idx === labels.length - 1 ? 'right' : 'center';
+    ctx.fillText(l.text, l.x, height - padding + 14);
+  });
+
+  ctx.textAlign = 'left';
   ctx.fillText('Tokens (dernière heure)', padding, padding - 6);
 }
 
@@ -301,7 +395,10 @@ function setMessage(msg, kind = "info") {
 async function onSave() {
   try {
     const v = (els.apiKeyInput.value || "").trim();
-    const t = setTokenUIValue((els.maxTokensInput?.value ?? els.maxTokensSlider?.value) || DEFAULTS.maxTokens);
+    const sliderTokens = els.maxTokensSlider ? sliderValueToTokens(els.maxTokensSlider.value) : undefined;
+    const rawTokenInput = (els.maxTokensInput?.value || "").trim();
+    const preferredValue = rawTokenInput !== "" ? rawTokenInput : sliderTokens;
+    const t = setTokenUIValue(preferredValue ?? DEFAULTS.maxTokens);
 
     if (v) {
       await setApiKey(v);
@@ -363,6 +460,7 @@ function onResetLogs() {
 
   resetDiagnosticsLogs();
   updateLogsUI();
+  setMessage('Historique et compteurs remis à zéro.', 'info');
 }
 
 function wireUi() {
@@ -384,11 +482,7 @@ function wireUi() {
     logList: $("logList"),
     refreshLogsBtn: $("refreshLogsBtn"),
     resetLogsBtn: $("resetLogsBtn"),
-    usageChart: $("usageChart"),
-    // Features UI
-    featuresHeader: $("featuresHeader"),
-    featuresContent: $("featuresContent"),
-    featuresToggle: $("featuresToggle")
+    usageChart: $("usageChart")
   };
 
   els.saveBtn.addEventListener("click", onSave);
@@ -402,6 +496,8 @@ function wireUi() {
   if (els.resetLogsBtn) {
     els.resetLogsBtn.addEventListener("click", onResetLogs);
   }
+
+  setupSectionToggles();
 
   els.apiKeyInput.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter") onSave();
@@ -419,21 +515,15 @@ function wireUi() {
   }
 
   if (els.maxTokensSlider) {
+    els.maxTokensSlider.setAttribute('min', '0');
+    els.maxTokensSlider.setAttribute('max', String(Math.max(0, TOKEN_STEPS.length - 1)));
+    els.maxTokensSlider.setAttribute('step', '1');
     els.maxTokensSlider.addEventListener("input", () => {
-      setTokenUIValue(els.maxTokensSlider.value);
+      const snapped = sliderValueToTokens(els.maxTokensSlider.value);
+      setTokenUIValue(snapped);
     });
   }
 
-  // Features toggle
-  if (els.featuresHeader) {
-    els.featuresHeader.addEventListener("click", () => {
-        const isHidden = els.featuresContent.style.display === "none";
-        els.featuresContent.style.display = isHidden ? "block" : "none";
-        els.featuresToggle.textContent = isHidden ? "▲" : "▼";
-    });
-  }
-
-  initTabs();
 }
 
 Office.onReady(async () => {
@@ -441,11 +531,8 @@ Office.onReady(async () => {
   await refreshKeyStatus();
   updateLogsUI();
 
-  // Auto-refresh logs if tab is active
+  // Auto-refresh logs
   setInterval(() => {
-    const logsTab = document.getElementById('logs');
-    if(logsTab && logsTab.classList.contains('active')) {
-      updateLogsUI();
-    }
+    updateLogsUI();
   }, 4000);
 });
