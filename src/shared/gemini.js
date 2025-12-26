@@ -406,7 +406,15 @@ export async function geminiGenerate(req) {
             functionName: req.functionName
           });
 
-          return { ok: true, text: cleaned, cached: false, cacheKey, latencyMs: lat, diagnostics };
+          return { 
+            ok: true, 
+            text: cleaned, 
+            groundingMetadata, // [IMPORTANT] On l'ajoute ici pour qu'AI.WEB puisse le lire
+            cached: false, 
+            cacheKey, 
+            latencyMs: lat, 
+            diagnostics 
+          };
         } catch (e) {
           const msg = (e?.name === "AbortError" || e?.message === "timeout") ? "Timeout" : (e?.message || "Network error");
           const code = msg === "Timeout" ? ERR.TIMEOUT : ERR.API_ERROR;
