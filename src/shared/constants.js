@@ -32,7 +32,7 @@ export const LIMITS = {
 
 export const DEFAULTS = {
   lang: "fr",
-  timeoutMs: 20000,
+  timeoutMs: 60000,
   retry: 1,
   cache: "persistent",
   cacheTtlSec: 24 * 3600,
