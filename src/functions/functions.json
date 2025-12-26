@@ -28,8 +28,8 @@
       "name": "EXTRACT",
       "description": "Extract specific entities from text or range.",
       "parameters": [
-        { "name": "instruction", "description": "What to extract (e.g. 'Mails', 'Names').", "type": "string", "dimensionality": "scalar" },
         { "name": "textOrRange", "description": "Input text or range to search in.", "type": "any", "dimensionality": "matrix" },
+        { "name": "instruction", "description": "What to extract (e.g. 'Mails', 'Names').", "type": "string", "dimensionality": "scalar" },
         { "name": "options", "description": "Optional JSON options.", "type": "string", "dimensionality": "scalar", "optional": true }
       ],
       "result": { "type": "string", "dimensionality": "matrix" }
