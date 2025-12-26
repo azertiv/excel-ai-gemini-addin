@@ -17,6 +17,7 @@ const TOKEN_STEPS = (() => {
 })();
 
 let els = {};
+let openLogDetails = new Set();
 
 function $(id) { return document.getElementById(id); }
 
@@ -110,10 +111,18 @@ function getTokenColorClass(total) {
 
 // Helper to toggle log details
 function toggleLogDetails(id) {
-    const el = document.getElementById('code-' + id);
-    if(el) {
-        el.style.display = (el.style.display === 'block') ? 'none' : 'block';
-    }
+  const el = document.getElementById('code-' + id);
+  if (!el) return;
+
+  const isOpen = el.style.display === 'block';
+  const nextState = !isOpen;
+  el.style.display = nextState ? 'block' : 'none';
+
+  if (nextState) {
+    openLogDetails.add(id);
+  } else {
+    openLogDetails.delete(id);
+  }
 }
 
 // Ensure function is safe to call
@@ -274,11 +283,13 @@ function updateLogsUI() {
     if (!list) return;
 
     if (!snap.logs || snap.logs.length === 0) {
+      openLogDetails.clear();
       list.innerHTML = '<div style="padding:15px; text-align:center; color:#999; font-style:italic;">Aucune requête récente</div>';
       return;
     }
 
     let html = "";
+    const activeIds = new Set();
     for (const log of snap.logs) {
       const isErr = !log.success;
       const logTotalTokens = (log.inputTokens || 0) + (log.outputTokens || 0);
@@ -291,6 +302,8 @@ function updateLogsUI() {
       const errCode = (isErr && log.code !== funcName) ? `(${log.code})` : "";
 
       const uniqueId = log.id || Math.random().toString(36).substr(2, 9);
+      const isOpen = openLogDetails.has(uniqueId);
+      activeIds.add(uniqueId);
 
       // Full details (Formula/Code/Prompt)
       const detailText = log.message || "(No details available)";
@@ -326,18 +339,41 @@ function updateLogsUI() {
                 </div>
             </div>
 
-            <div id="code-${uniqueId}" class="log-full-code">${safeDetailText}</div>
+            <div id="code-${uniqueId}" class="log-full-code" style="display:${isOpen ? 'block' : 'none'}">
+              <div class="log-full-code__actions">
+                <button class="copy-btn" data-copy-id="${uniqueId}" title="Copier le prompt">📋</button>
+              </div>
+              <pre class="log-full-code__text">${safeDetailText}</pre>
+            </div>
         </div>
       `;
     }
     list.innerHTML = html;
 
+    // Nettoie les IDs qui ne sont plus présents (évite de rouvrir après reset)
+    openLogDetails = new Set([...openLogDetails].filter(id => activeIds.has(id)));
+
     // Attach event listeners for toggles
     list.querySelectorAll('.log-code-toggle').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            const id = e.target.getAttribute('data-id');
-            toggleLogDetails(id);
-        });
+      btn.addEventListener('click', (e) => {
+        const id = e.target.getAttribute('data-id');
+        toggleLogDetails(id);
+      });
+    });
+
+    list.querySelectorAll('.copy-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const id = e.currentTarget.getAttribute('data-copy-id');
+        const textEl = document.getElementById('code-' + id)?.querySelector('.log-full-code__text');
+        if (!textEl) return;
+        try {
+          await navigator.clipboard.writeText(textEl.textContent || '');
+          setMessage('Prompt copié dans le presse-papiers.', 'info');
+        } catch (err) {
+          console.error('Clipboard error', err);
+          setMessage('Impossible de copier le prompt.', 'error');
+        }
+      });
     });
   } catch (e) {
     console.error("Error updating logs UI", e);
@@ -454,14 +490,15 @@ async function onTest() {
   }
 }
 
-function onResetLogs() {
-  const confirmed = window.confirm('Réinitialiser les logs et les coûts ?');
-  if (!confirmed) return;
+  function onResetLogs() {
+    const confirmed = window.confirm('Réinitialiser les logs et les coûts ?');
+    if (!confirmed) return;
 
-  resetDiagnosticsLogs();
-  updateLogsUI();
-  setMessage('Historique et compteurs remis à zéro.', 'info');
-}
+    resetDiagnosticsLogs();
+    openLogDetails.clear();
+    updateLogsUI();
+    setMessage('Historique et compteurs remis à zéro.', 'info');
+  }
 
 function wireUi() {
   els = {
