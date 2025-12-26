@@ -1,4 +1,4 @@
-import { STORAGE } from "./constants";
+import { STORAGE, TOKEN_LIMITS } from "./constants";
 import { diagSet } from "./diagnostics";
 
 let _officeReadyPromise = null;
@@ -111,8 +111,12 @@ export async function getMaxTokens() {
 
   _maxTokensLoadPromise = (async () => {
     const v = await getItem(STORAGE.MAX_TOKENS);
-    const n = Number(v);
-    _maxTokensValue = Number.isFinite(n) && n > 0 ? n : null;
+    const n = Math.floor(Number(v));
+    if (Number.isFinite(n) && n >= TOKEN_LIMITS.MIN) {
+      _maxTokensValue = Math.min(TOKEN_LIMITS.MAX, Math.max(TOKEN_LIMITS.MIN, n));
+    } else {
+      _maxTokensValue = null;
+    }
     _maxTokensLoaded = true;
     return _maxTokensValue;
   })();
@@ -121,12 +125,13 @@ export async function getMaxTokens() {
 }
 
 export async function setMaxTokens(val) {
-  const n = Number(val);
-  const valid = Number.isFinite(n) && n > 0;
+  const n = Math.floor(Number(val));
+  const valid = Number.isFinite(n) && n >= TOKEN_LIMITS.MIN;
 
   if (valid) {
-    _maxTokensValue = n;
-    await setItem(STORAGE.MAX_TOKENS, String(n));
+    const clamped = Math.min(TOKEN_LIMITS.MAX, Math.max(TOKEN_LIMITS.MIN, n));
+    _maxTokensValue = clamped;
+    await setItem(STORAGE.MAX_TOKENS, String(clamped));
   } else {
     _maxTokensValue = null;
     await removeItem(STORAGE.MAX_TOKENS);

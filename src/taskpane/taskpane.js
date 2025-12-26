@@ -3,10 +3,27 @@
 import { getApiKey, setApiKey, clearApiKey, getMaxTokens, setMaxTokens, storageBackend } from "../shared/storage";
 import { geminiMinimalTest } from "../shared/gemini";
 import { getDiagnosticsSnapshot, resetDiagnosticsLogs } from "../shared/diagnostics";
+import { DEFAULTS, TOKEN_LIMITS } from "../shared/constants";
 
 let els = {};
 
 function $(id) { return document.getElementById(id); }
+
+function clampTokenValue(raw) {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n)) return DEFAULTS.maxTokens;
+  const step = TOKEN_LIMITS.STEP || 1;
+  const rounded = Math.round(n / step) * step;
+  return Math.max(TOKEN_LIMITS.MIN, Math.min(TOKEN_LIMITS.MAX, rounded));
+}
+
+function setTokenUIValue(raw) {
+  const v = clampTokenValue(raw);
+  if (els.maxTokensSlider) els.maxTokensSlider.value = String(v);
+  if (els.maxTokensInput) els.maxTokensInput.value = String(v);
+  if (els.maxTokensValue) els.maxTokensValue.textContent = String(v);
+  return v;
+}
 
 // --- LOGIQUE ONGLETS ---
 function initTabs() {
@@ -268,9 +285,7 @@ async function refreshKeyStatus() {
   els.keyStatus.textContent = key ? "OK" : "MISSING";
   els.keyStatus.className = key ? "status ok" : "status missing";
 
-  if (els.maxTokensInput) {
-    els.maxTokensInput.value = maxTokens || "";
-  }
+  setTokenUIValue(maxTokens ?? DEFAULTS.maxTokens);
 
   els.backend.textContent =
     backend === "office" ? "OfficeRuntime.storage" :
@@ -286,7 +301,7 @@ function setMessage(msg, kind = "info") {
 async function onSave() {
   try {
     const v = (els.apiKeyInput.value || "").trim();
-    const t = (els.maxTokensInput.value || "").trim();
+    const t = setTokenUIValue((els.maxTokensInput?.value ?? els.maxTokensSlider?.value) || DEFAULTS.maxTokens);
 
     if (v) {
       await setApiKey(v);
@@ -354,6 +369,8 @@ function wireUi() {
   els = {
     apiKeyInput: $("apiKeyInput"),
     maxTokensInput: $("maxTokensInput"),
+    maxTokensSlider: $("maxTokensSlider"),
+    maxTokensValue: $("maxTokensValue"),
     saveBtn: $("saveKeyBtn"),
     clearBtn: $("clearKeyBtn"),
     testBtn: $("testBtn"),
@@ -393,6 +410,17 @@ function wireUi() {
   if (els.maxTokensInput) {
     els.maxTokensInput.addEventListener("keydown", (ev) => {
         if (ev.key === "Enter") onSave();
+    });
+
+    // Keep slider + numeric input synchronized.
+    els.maxTokensInput.addEventListener("input", () => {
+      setTokenUIValue(els.maxTokensInput.value);
+    });
+  }
+
+  if (els.maxTokensSlider) {
+    els.maxTokensSlider.addEventListener("input", () => {
+      setTokenUIValue(els.maxTokensSlider.value);
     });
   }
 

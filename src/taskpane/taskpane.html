@@ -180,8 +180,10 @@
             </div>
 
             <div class="row" style="margin-top:10px;">
-                <label for="maxTokensInput">Max Tokens (défaut 2048)</label>
-                <input id="maxTokensInput" type="number" placeholder="ex: 2048" />
+                <label for="maxTokensSlider">Limite de tokens (sortie): <span id="maxTokensValue" class="mono">2048</span></label>
+                <input id="maxTokensSlider" type="range" min="32" max="64000" step="32" />
+                <input id="maxTokensInput" type="number" min="32" max="64000" step="32" placeholder="32–64000" />
+                <div class="muted" style="margin-top:4px;">Astuce: augmentez cette valeur pour les grosses tables / gros ranges (ex. 100 lignes).</div>
             </div>
 
             <div class="buttons">
@@ -242,9 +244,9 @@
                         </div>
                         <p class="feature-desc">Repère et extrait des entités depuis une plage (e-mails, dates, montants, etc.).</p>
                         <ul class="feature-usage">
-                            <li><strong>Syntaxe :</strong> <code>=AI.EXTRACT(instruction, plage, [options])</code></li>
+                            <li><strong>Syntaxe :</strong> <code>=AI.EXTRACT(plage, instruction, [options])</code></li>
                             <li><strong>Utilisation :</strong> indiquez l'entité recherchée (« e-mail pro », « montant TTC », etc.).</li>
-                            <li><strong>Retour :</strong> colonne nettoyée avec une valeur par ligne.</li>
+                            <li><strong>Retour :</strong> valeurs alignées avec l'entrée (cellule ou plage). Pour une cellule unique, peut "spill" en plusieurs lignes si plusieurs occurrences sont trouvées.</li>
                         </ul>
                     </div>
 
@@ -268,7 +270,7 @@
                         </div>
                         <p class="feature-desc">Condense un texte ou une plage en quelques phrases ou puces.</p>
                         <ul class="feature-usage">
-                            <li><strong>Syntaxe :</strong> <code>=AI.SUMMARIZE(texte, [options])</code></li>
+                            <li><strong>Syntaxe :</strong> <code>=AI.SUMMARIZE(texteOuPlage, [options])</code></li>
                             <li><strong>Utilisation :</strong> définissez longueur ou style via <code>options</code> (ex. <code>{ "lang": "en" }</code>).</li>
                             <li><strong>Retour :</strong> résumé concis limité aux caractères de cellule.</li>
                         </ul>
@@ -281,9 +283,9 @@
                         </div>
                         <p class="feature-desc">Traduit un texte vers la langue cible en conservant le sens.</p>
                         <ul class="feature-usage">
-                            <li><strong>Syntaxe :</strong> <code>=AI.TRANSLATE(texte, langue, [options])</code></li>
+                            <li><strong>Syntaxe :</strong> <code>=AI.TRANSLATE(texteOuPlage, langue, [options])</code></li>
                             <li><strong>Utilisation :</strong> passez un code de langue (« en », « es »...) ou un nom (« français »).</li>
-                            <li><strong>Retour :</strong> texte traduit sans guillemets ni balises.</li>
+                            <li><strong>Retour :</strong> texte traduit (cellule ou plage, aligné avec l'entrée).</li>
                         </ul>
                     </div>
 
@@ -296,7 +298,7 @@
                         <ul class="feature-usage">
                             <li><strong>Syntaxe :</strong> <code>=AI.CLASSIFY(texte, labels, [options])</code></li>
                             <li><strong>Utilisation :</strong> fournissez les labels sous forme de plage ou de chaîne séparée par « | ».</li>
-                            <li><strong>Retour :</strong> une seule étiquette (ou <code>UNKNOWN</code> en cas de doute).</li>
+                            <li><strong>Retour :</strong> une étiquette par cellule d'entrée (ou <code>UNKNOWN</code> en cas de doute), alignée sur la plage d'entrée.</li>
                         </ul>
                     </div>
 

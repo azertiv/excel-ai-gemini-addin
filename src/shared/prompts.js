@@ -1,9 +1,9 @@
-import { LIMITS, ERR } from "./constants";
+import { ERR } from "./constants";
 import { matrixToTSV, normalizeTextInput } from "./range";
 
 export function buildAskPrompt(prompt, contextRange, options) {
   const lang = options?.lang || "fr";
-  const ctx = contextRange ? matrixToTSV(contextRange, options?.maxContextChars || LIMITS.MAX_CONTEXT_CHARS) : "";
+  const ctx = contextRange ? matrixToTSV(contextRange, { maxChars: options?.maxContextChars }) : "";
   const system = [
     "You are an assistant embedded in Microsoft Excel custom functions.",
     `Respond in ${lang}.`,
@@ -12,7 +12,7 @@ export function buildAskPrompt(prompt, contextRange, options) {
     "If the question cannot be answered from the provided information, say so briefly and suggest what to add."
   ].join("\n");
 
-  const user = [ctx ? "CONTEXT (TSV, may be truncated):\n" + ctx : "", "USER PROMPT:\n" + normalizeTextInput(prompt)]
+  const user = [ctx ? "CONTEXT (TSV):\n" + ctx : "", "USER PROMPT:\n" + normalizeTextInput(prompt)]
     .filter(Boolean)
     .join("\n\n");
 
@@ -94,7 +94,7 @@ export function buildClassifyPrompt(text, labels, options) {
 
 export function buildTablePrompt(prompt, contextRange, options) {
   const lang = options?.lang || "fr";
-  const ctx = contextRange ? matrixToTSV(contextRange, options?.maxContextChars || LIMITS.MAX_CONTEXT_CHARS) : "";
+  const ctx = contextRange ? matrixToTSV(contextRange, { maxChars: options?.maxContextChars }) : "";
 
   const system = [
     "You generate tabular data for Excel.",
@@ -111,7 +111,7 @@ export function buildTablePrompt(prompt, contextRange, options) {
   if (options?.maxCols) constraints.push(`Maximum cols: ${options.maxCols}`);
 
   const user = [
-    ctx ? "CONTEXT (TSV, may be truncated):\n" + ctx : "",
+    ctx ? "CONTEXT (TSV):\n" + ctx : "",
     "PROMPT:\n" + normalizeTextInput(prompt),
     constraints.length ? "CONSTRAINTS:\n" + constraints.map((x) => `- ${x}`).join("\n") : ""
   ].filter(Boolean).join("\n\n");
@@ -121,7 +121,7 @@ export function buildTablePrompt(prompt, contextRange, options) {
 
 export function buildFillPrompt(exampleRange, targetRange, instruction, options) {
   const lang = options?.lang || "fr";
-  const maxExamples = options?.maxExamples || LIMITS.MAX_EXAMPLES;
+  const maxExamples = Number.isFinite(Number(options?.maxExamples)) ? Math.max(0, Math.floor(Number(options.maxExamples))) : Infinity;
 
   const examples = [];
   for (const row of exampleRange) {
@@ -159,18 +159,18 @@ export function buildFillPrompt(exampleRange, targetRange, instruction, options)
 
 export function buildSummarizePrompt(text, options) {
   const lang = options?.lang || "fr";
-  const maxBullets = options?.maxBullets || 6;
+  // No hard bullet count limits; maxOutputTokens governs length.
 
   const system = [
-    "You summarize text into bullet points.",
-    "Return ONLY JSON matching the schema: {bullets: string[]}.",
-    `bullets must contain at most ${maxBullets} short items.`,
+    "You summarize text for a spreadsheet cell.",
     `Respond in ${lang}.`,
-    "No Markdown. No extra keys."
+    "Return a concise summary.",
+    "Use bullet points with '-' when it improves readability.",
+    "No Markdown. No code fences."
   ].join("\n");
 
   const user = "TEXT:\n" + normalizeTextInput(text);
-  return { system, user, maxBullets };
+  return { system, user };
 }
 
 export function buildCleanAiPrompt(text, options) {

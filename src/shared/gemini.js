@@ -1,6 +1,6 @@
 // src/shared/gemini.js
 
-import { GEMINI, DEFAULTS, LIMITS, ERR, STORAGE } from "./constants";
+import { GEMINI, DEFAULTS, LIMITS, TOKEN_LIMITS, ERR, STORAGE } from "./constants";
 import { getApiKey, getMaxTokens, getItem, setItem, removeItem } from "./storage";
 import { LRUCache } from "./lru";
 import { hashKey } from "./hash";
@@ -64,10 +64,26 @@ function isRetriableHttpStatus(status) {
   return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
 }
 
-function classifyHttpError(status) {
+function looksTooLarge(message) {
+  const m = String(message || "").toLowerCase();
+  // Common patterns returned by Google APIs when a request exceeds payload/context limits.
+  return (
+    m.includes("too large") ||
+    m.includes("exceeds") ||
+    m.includes("exceed") ||
+    m.includes("maximum") && m.includes("token") ||
+    m.includes("context") && m.includes("limit") ||
+    m.includes("request payload") ||
+    m.includes("payload size")
+  );
+}
+
+function classifyHttpError(status, message) {
   if (status === 401 || status === 403) return ERR.AUTH;
   if (status === 408) return ERR.TIMEOUT;
   if (status === 429) return ERR.RATE_LIMIT;
+  if (status === 413) return ERR.TOO_LARGE;
+  if (status === 400 && looksTooLarge(message)) return ERR.TOO_LARGE;
   return ERR.API_ERROR;
 }
 
@@ -223,13 +239,18 @@ export async function geminiGenerate(req) {
   const generationConfig = req.generationConfig || {};
 
   // Logic priority: req.generationConfig.maxOutputTokens > storage setting > DEFAULTS.maxTokens
-  let maxTokens = DEFAULTS.maxTokens;
+  // Clamp to the UI bounds (32..64000) to avoid silent provider errors.
+  let maxTokensRaw = DEFAULTS.maxTokens;
   if (typeof generationConfig.maxOutputTokens === "number") {
-    maxTokens = generationConfig.maxOutputTokens;
+    maxTokensRaw = generationConfig.maxOutputTokens;
   } else {
     const stored = await getMaxTokens();
-    if (stored) maxTokens = stored;
+    if (stored) maxTokensRaw = stored;
   }
+
+  let maxTokens = Math.floor(Number(maxTokensRaw));
+  if (!Number.isFinite(maxTokens)) maxTokens = DEFAULTS.maxTokens;
+  maxTokens = Math.min(TOKEN_LIMITS.MAX, Math.max(TOKEN_LIMITS.MIN, maxTokens));
 
   const body = {
     systemInstruction: { role: "system", parts: [{ text: String(req.system || "") }] },
@@ -349,7 +370,7 @@ export async function geminiGenerate(req) {
               msg = errJson?.error?.message || msg;
             } catch { /* ignore */ }
 
-            const code = classifyHttpError(status);
+            const code = classifyHttpError(status, msg);
             const lat = Date.now() - attemptStart;
 
             // Log de l'échec
@@ -387,8 +408,10 @@ export async function geminiGenerate(req) {
             return { ok: false, code: ERR.EMPTY_RESPONSE, errorCode: ERR.EMPTY_RESPONSE, message: msg, httpStatus: resp.status, diagnostics };
           }
 
+          // IMPORTANT: do not truncate the raw model output here.
+          // Many Excel functions expect to parse JSON/TSV returned by the model; truncation would corrupt it.
+          // Cell-length constraints are enforced later (when returning a single-cell string result).
           let cleaned = normalizedText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
-          if (cleaned.length > LIMITS.MAX_CELL_CHARS) cleaned = cleaned.slice(0, LIMITS.MAX_CELL_CHARS) + "\n…(truncated)";
 
           if (cacheMode !== "none") ST.memCache.set(cacheKey, cleaned);
           if (cacheMode === "persistent") await persistSet(cacheKey, cleaned);

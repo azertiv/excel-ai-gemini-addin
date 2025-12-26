@@ -3,7 +3,7 @@
 
 import { geminiGenerate, geminiMinimalTest } from "../shared/gemini.js";
 import { getApiKey } from "../shared/storage.js";
-import { ERR, DEFAULTS, LIMITS } from "../shared/constants.js";
+import { ERR, DEFAULTS, LIMITS, TOKEN_LIMITS } from "../shared/constants.js";
 
 // ---------- helpers ----------
 
@@ -76,17 +76,24 @@ function extractFormula(text) {
   return first ? (first.startsWith("=") ? first : "=" + first) : "";
 }
 
-function matrixToTSV(matrix, maxChars = LIMITS.MAX_CONTEXT_CHARS) {
+function matrixToTSV(matrix, maxChars) {
   if (!Array.isArray(matrix)) return "";
+
+  // No hard cap by default. If maxChars is provided, it is treated as an optional safety limit.
+  const limit = Number.isFinite(Number(maxChars)) && Number(maxChars) > 0 ? Math.floor(Number(maxChars)) : Infinity;
+
   let out = "";
   for (const row of matrix) {
-    if (out.length >= maxChars) break;
+    if (out.length >= limit) break;
     const r = Array.isArray(row) ? row : [row];
     const line = r.map((c) => safeString(c).replace(/\t/g, " ").replace(/\n/g, " ")).join("\t");
-    if (out) out += "\n";
-    out += line;
+    const next = out ? out + "\n" + line : line;
+    if (next.length > limit) {
+      out = next.slice(0, limit);
+      break;
+    }
+    out = next;
   }
-  if (out.length > maxChars) out = out.slice(0, maxChars) + "\n…(truncated)";
   return out;
 }
 
@@ -130,7 +137,7 @@ function coerceToTextOrJoin2D(v) {
   if (typeof v === "string") return v;
   if (Array.isArray(v)) {
     if (v.length === 0) return "";
-    if (Array.isArray(v[0])) return matrixToTSV(v, LIMITS.MAX_INPUT_CHARS);
+    if (Array.isArray(v[0])) return matrixToTSV(v);
     return v.map((x) => safeString(x)).join("\n");
   }
   return safeString(v);
@@ -162,6 +169,40 @@ function lightlyCleanExtractedValue(value, instruction) {
   }
 
   return raw;
+}
+
+function isEmailLikeInstruction(instruction) {
+  const s = safeString(instruction).toLowerCase();
+  // Common French/English phrasings.
+  return (
+    s.includes("email") ||
+    s.includes("e-mail") ||
+    s.includes("mail") ||
+    s.includes("courriel") ||
+    s.includes("adresse électronique") ||
+    s.includes("adresse electronique") ||
+    s.includes("adresse email") ||
+    s.includes("adresse mail")
+  );
+}
+
+function extractEmailsFromText(text, instructionHint = "email") {
+  const cleaned = lightlyCleanExtractedValue(text, instructionHint);
+  // RFC-like pragmatic regex (good enough for spreadsheet extraction).
+  const re = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+  const matches = cleaned.match(re) || [];
+  // Deduplicate while preserving order.
+  const seen = new Set();
+  const out = [];
+  for (const m of matches) {
+    const v = safeString(m).trim();
+    if (!v) continue;
+    const key = v.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(v);
+  }
+  return out;
 }
 
 function truncateForCell(s, maxChars = LIMITS.MAX_CELL_CHARS) {
@@ -218,7 +259,21 @@ function sysAsk(lang = "fr") {
   ].join("\n");
 }
 
-function sysTranslate(targetLang) {
+function sysTranslate(targetLang, expectedItems) {
+  const n = Number.isFinite(Number(expectedItems)) ? Math.floor(Number(expectedItems)) : 0;
+  if (n > 1) {
+    return [
+      "You are a translation engine.",
+      `Translate each cell independently into ${targetLang}.`,
+      "Return STRICT JSON only (no Markdown, no code fences).",
+      `Return an object with a single key 'items' containing exactly ${n} strings in the same order as the provided cells.`,
+      "Each item must contain ONLY the translated text for that cell.",
+      "Preserve numbers, units, and identifiers as-is unless they require translation.",
+      "For empty inputs, return an empty string at the same position.",
+      "Do not add any keys other than 'items'."
+    ].join("\n");
+  }
+
   return [
     "You are a translation engine.",
     `Translate the user text into ${targetLang}.`,
@@ -275,9 +330,9 @@ function sysSummarize(lang = "fr") {
   return [
     "You summarize text for a spreadsheet cell.",
     `Respond in ${lang}.`,
-    "Return 3 to 7 bullet points.",
-    "Use '-' as bullet prefix.",
-    "No Markdown headers. No code fences."
+    "Return a clear summary suitable for an Excel cell.",
+    "Use bullet points with '-' when it improves readability.",
+    "No Markdown headers. No code fences. No surrounding quotes."
   ].join("\n");
 }
 
@@ -302,15 +357,20 @@ function sysExtract(instruction, lang = "fr", expectedItems) {
   ].join("\n");
 }
 
-function sysFill(lang = "fr", maxRows = LIMITS.MAX_FILL_ROWS) {
+function sysFill(lang = "fr", expectedItems) {
+  const n = Number.isFinite(Number(expectedItems)) ? Math.floor(Number(expectedItems)) : 0;
+  const spec = n > 0
+    ? `Return an object with a single key 'values' containing exactly ${n} strings, in the same order as the target rows.`
+    : "Return an object with a single key 'values' containing an array of strings.";
+
   return [
     "You are filling spreadsheet cells based on examples.",
     `Respond in ${lang}.`,
     "Return STRICT JSON only (no Markdown, no code fences).",
-    "Return an object with shape: {\"values\": string[]}.",
-    `Return at most ${maxRows} values.`,
+    spec,
     "Return only the values, in order, one per target row.",
-    "If a value is unknown, return an empty string for that row."
+    "If a value is unknown, return an empty string for that row.",
+    "Do not add any keys other than 'values'."
   ].join("\n");
 }
 
@@ -349,28 +409,50 @@ function sysFormula(lang) {
 
 async function callGemini({ system, user, options, functionName }) {
   const opt = options || {};
-  const temperature = typeof opt.temperature === "number" ? clamp(opt.temperature, 0, 1, DEFAULTS.temperature) : DEFAULTS.temperature;
-  const maxTokens = typeof opt.maxTokens === "number" ? clamp(opt.maxTokens, 1, 8192, DEFAULTS.maxTokens) : DEFAULTS.maxTokens;
+  const temperature = typeof opt.temperature === "number"
+    ? clamp(opt.temperature, 0, 1, DEFAULTS.temperature)
+    : DEFAULTS.temperature;
 
-  const timeoutMs = typeof opt.timeoutMs === "number" ? clamp(opt.timeoutMs, 1000, 60000, DEFAULTS.timeoutMs) : DEFAULTS.timeoutMs;
-  const retry = typeof opt.retry === "number" ? clamp(opt.retry, 0, 2, DEFAULTS.retry) : DEFAULTS.retry;
+  // maxOutputTokens handling:
+  // - If the user provides an explicit per-formula value, clamp it to the UI bounds.
+  // - Otherwise do NOT set maxOutputTokens here, so the stored global setting (taskpane slider) is used.
+  const maxTokensCandidate = opt.maxTokens ?? opt.maxOutputTokens;
+  let maxOutputTokens;
+  if (maxTokensCandidate !== undefined) {
+    const n = Math.floor(Number(maxTokensCandidate));
+    if (Number.isFinite(n)) {
+      maxOutputTokens = Math.min(TOKEN_LIMITS.MAX, Math.max(TOKEN_LIMITS.MIN, n));
+    }
+  }
+
+  const timeoutMs = typeof opt.timeoutMs === "number"
+    ? clamp(opt.timeoutMs, 1000, 60000, DEFAULTS.timeoutMs)
+    : DEFAULTS.timeoutMs;
+
+  const retry = typeof opt.retry === "number"
+    ? clamp(opt.retry, 0, 2, DEFAULTS.retry)
+    : DEFAULTS.retry;
 
   const cacheMode = typeof opt.cache === "string" ? opt.cache : DEFAULTS.cache;
   const cacheTtlSec = typeof opt.cacheTtlSec === "number" ? clamp(opt.cacheTtlSec, 0, 24 * 3600, DEFAULTS.cacheTtlSec) : DEFAULTS.cacheTtlSec;
   const cacheOnly = Boolean(opt.cacheOnly);
 
+  const generationConfig = { temperature };
+  if (typeof maxOutputTokens === "number") generationConfig.maxOutputTokens = maxOutputTokens;
+
   const res = await geminiGenerate({
     model: opt.model,
     system,
     user,
-    generationConfig: { temperature, maxOutputTokens: maxTokens },
+    generationConfig,
     tools: Array.isArray(opt.tools) ? opt.tools : undefined,
     cache: cacheMode,
     cacheTtlSec,
     cacheOnly,
     timeoutMs,
     retry,
-    responseMimeType: opt.responseMimeType, // Support de l'option JSON
+    responseMimeType: opt.responseMimeType,
+    responseJsonSchema: opt.responseJsonSchema,
     functionName: functionName
   });
 
@@ -394,7 +476,7 @@ export async function TEST() {
     if (!res.ok) return errorCode(res.code);
     return "OK";
   } catch (e) {
-    return errorCode(ERR.API_ERROR);
+    return fillMatrix(normalizeRangeToMatrix(text), errorCode(ERR.API_ERROR));
   }
 }
 
@@ -403,8 +485,8 @@ export async function ASK(prompt, contextRange, options) {
     const opt = parseOptions(options);
     const lang = opt.lang || "fr";
 
-    const ctx = contextRange ? matrixToTSV(contextRange, opt.maxContextChars || LIMITS.MAX_CONTEXT_CHARS) : "";
-    const user = [ctx ? `CONTEXT (TSV, may be truncated):\n${ctx}` : "", `USER PROMPT:\n${coerceToTextOrJoin2D(prompt)}`]
+    const ctx = contextRange ? matrixToTSV(contextRange, opt.maxContextChars) : "";
+    const user = [ctx ? `CONTEXT (TSV):\n${ctx}` : "", `USER PROMPT:\n${coerceToTextOrJoin2D(prompt)}`]
       .filter(Boolean)
       .join("\n\n");
 
@@ -418,7 +500,7 @@ export async function ASK(prompt, contextRange, options) {
     if (!res.ok) return errorCode(res.code);
     return truncateForCell(res.text);
   } catch (e) {
-    return errorCode(ERR.API_ERROR);
+    return fillMatrix(normalizeRangeToMatrix(text), errorCode(ERR.API_ERROR));
   }
 }
 
@@ -498,14 +580,58 @@ export async function TRANSLATE(text, targetLang, options) {
   try {
     const opt = parseOptions(options);
     const lang = safeString(targetLang).trim() || "en";
+    const matrix = normalizeRangeToMatrix(text);
+    const flatCells = [];
+    for (const row of matrix) {
+      for (const cell of row) {
+        flatCells.push(normalizeNewlines(coerceToTextOrJoin2D(cell)));
+      }
+    }
+
+    if (flatCells.length === 0) return fillMatrix(matrix, errorCode(ERR.BAD_INPUT));
+
+    // Single cell => single translation (still returned as a 1x1 matrix so it can also spill when used on ranges).
+    if (flatCells.length === 1) {
+      const raw = flatCells[0];
+      if (!raw.trim()) return [[""]];
+
+      const res = await callGemini({
+        system: sysTranslate(lang, 1),
+        user: raw,
+        options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.2 },
+        functionName: "AI.TRANSLATE"
+      });
+
+      if (!res.ok) return fillMatrix(matrix, errorCode(res.code));
+      return [[truncateForCell(res.text)]];
+    }
+
+    const hasContent = flatCells.some((cell) => safeString(cell).trim());
+    if (!hasContent) return matrix.map((row) => row.map(() => ""));
+
+    const userCells = flatCells
+      .map((cell, idx) => `${idx + 1}. ${cell ? cell : "<empty>"}`)
+      .join("\n");
+
     const res = await callGemini({
-      system: sysTranslate(lang),
-      user: normalizeNewlines(coerceToTextOrJoin2D(text)),
-      options: opt,
+      system: sysTranslate(lang, flatCells.length),
+      user: ["Cells:", userCells].join("\n"),
+      options: {
+        ...opt,
+        temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0,
+        responseMimeType: "application/json"
+      },
       functionName: "AI.TRANSLATE"
     });
-    if (!res.ok) return errorCode(res.code);
-    return truncateForCell(res.text);
+
+    if (!res.ok) return fillMatrix(matrix, errorCode(res.code));
+
+    const obj = extractJsonObject(res.text);
+    if (!obj || !Array.isArray(obj.items)) return fillMatrix(matrix, errorCode(ERR.PARSE_ERROR));
+    if (obj.items.length !== flatCells.length) return fillMatrix(matrix, errorCode(ERR.PARSE_ERROR));
+
+    let idx = 0;
+    return matrix.map((row) => row.map(() => truncateForCell(safeString(obj.items[idx++]))));
   } catch (e) {
     return errorCode(ERR.API_ERROR);
   }
@@ -525,8 +651,6 @@ export async function CLASSIFY(text, labels, options) {
           .map((label) => [label.toLowerCase(), label])
       ).values()
     );
-    if (!labs.length) return errorCode(ERR.BAD_INPUT);
-
     const matrix = normalizeRangeToMatrix(text);
     const flatCells = [];
     for (const row of matrix) {
@@ -535,7 +659,8 @@ export async function CLASSIFY(text, labels, options) {
       }
     }
 
-    if (flatCells.length === 0) return errorCode(ERR.BAD_INPUT);
+    if (!labs.length) return fillMatrix(matrix, errorCode(ERR.BAD_INPUT));
+    if (flatCells.length === 0) return fillMatrix(matrix, errorCode(ERR.BAD_INPUT));
 
     const normalizeLabel = (value) => {
       const raw = safeString(value).trim();
@@ -558,7 +683,7 @@ export async function CLASSIFY(text, labels, options) {
       const res = await callGemini({ system, user, options: opt, functionName: "AI.CLASSIFY" });
       if (!res.ok) return errorCode(res.code);
 
-      return normalizeLabel(res.text);
+      return [[normalizeLabel(res.text)]];
     }
 
     const hasContent = flatCells.some((cell) => safeString(cell).trim());
@@ -586,15 +711,19 @@ export async function CLASSIFY(text, labels, options) {
     const res = await callGemini({
       system,
       user,
-      options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 },
+      options: {
+        ...opt,
+        temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0,
+        responseMimeType: "application/json"
+      },
       functionName: "AI.CLASSIFY"
     });
 
-    if (!res.ok) return errorCode(res.code);
+    if (!res.ok) return fillMatrix(matrix, errorCode(res.code));
 
     const obj = extractJsonObject(res.text);
-    if (!obj || !Array.isArray(obj.items)) return errorCode(ERR.PARSE_ERROR);
-    if (obj.items.length !== flatCells.length) return errorCode(ERR.PARSE_ERROR);
+    if (!obj || !Array.isArray(obj.items)) return fillMatrix(matrix, errorCode(ERR.PARSE_ERROR));
+    if (obj.items.length !== flatCells.length) return fillMatrix(matrix, errorCode(ERR.PARSE_ERROR));
 
     let idx = 0;
     return matrix.map((row) => row.map(() => normalizeLabel(obj.items[idx++])));
@@ -615,11 +744,11 @@ export async function CLEAN(text, options) {
       }
     }
 
-    if (flatCells.length === 0) return errorCode(ERR.BAD_INPUT);
+    if (flatCells.length === 0) return fillMatrix(matrix, errorCode(ERR.BAD_INPUT));
 
     if (flatCells.length === 1) {
       const raw = flatCells[0];
-      if (!raw.trim()) return "";
+      if (!raw.trim()) return [[""]];
 
       const lang = opt.lang || "fr";
       const res = await callGemini({
@@ -629,8 +758,8 @@ export async function CLEAN(text, options) {
         functionName: "AI.CLEAN"
       });
 
-      if (!res.ok) return errorCode(res.code);
-      return truncateForCell(res.text);
+      if (!res.ok) return fillMatrix(matrix, errorCode(res.code));
+      return [[truncateForCell(res.text)]];
     }
 
     const lang = opt.lang || "fr";
@@ -663,17 +792,17 @@ export async function CLEAN(text, options) {
       functionName: "AI.CLEAN"
     });
 
-    if (!res.ok) return errorCode(res.code);
+    if (!res.ok) return fillMatrix(matrix, errorCode(res.code));
 
     const obj = extractJsonObject(res.text);
-    if (!obj || !Array.isArray(obj.items)) return errorCode(ERR.PARSE_ERROR);
-    if (obj.items.length !== flatCells.length) return errorCode(ERR.PARSE_ERROR);
+    if (!obj || !Array.isArray(obj.items)) return fillMatrix(matrix, errorCode(ERR.PARSE_ERROR));
+    if (obj.items.length !== flatCells.length) return fillMatrix(matrix, errorCode(ERR.PARSE_ERROR));
 
     const cleaned = obj.items.map((item) => safeString(item));
     let idx = 0;
     return matrix.map((row) => row.map(() => truncateForCell(cleaned[idx++])));
   } catch (e) {
-    return errorCode(ERR.API_ERROR);
+    return fillMatrix(normalizeRangeToMatrix(text), errorCode(ERR.API_ERROR));
   }
 }
 
@@ -689,7 +818,7 @@ export async function CONSISTENT(text, options) {
       }
     }
 
-    if (flatCells.length === 0) return errorCode(ERR.BAD_INPUT);
+    if (flatCells.length === 0) return fillMatrix(matrix, errorCode(ERR.BAD_INPUT));
 
     const hasContent = flatCells.some((cell) => safeString(cell).trim());
     if (!hasContent) return matrix.map((row) => row.map(() => ""));
@@ -716,17 +845,17 @@ export async function CONSISTENT(text, options) {
       functionName: "AI.CONSISTENT"
     });
 
-    if (!res.ok) return errorCode(res.code);
+    if (!res.ok) return fillMatrix(matrix, errorCode(res.code));
 
     const obj = extractJsonObject(res.text);
-    if (!obj || !Array.isArray(obj.items)) return errorCode(ERR.PARSE_ERROR);
-    if (obj.items.length !== flatCells.length) return errorCode(ERR.PARSE_ERROR);
+    if (!obj || !Array.isArray(obj.items)) return fillMatrix(matrix, errorCode(ERR.PARSE_ERROR));
+    if (obj.items.length !== flatCells.length) return fillMatrix(matrix, errorCode(ERR.PARSE_ERROR));
 
     const normalized = obj.items.map((item) => safeString(item));
     let idx = 0;
     return matrix.map((row) => row.map(() => truncateForCell(normalized[idx++])));
   } catch (e) {
-    return errorCode(ERR.API_ERROR);
+    return fillMatrix(normalizeRangeToMatrix(text), errorCode(ERR.API_ERROR));
   }
 }
 
@@ -760,7 +889,6 @@ export async function EXTRACT(textOrRange, instruction, options) {
     if (!instr) return errorCode(ERR.BAD_INPUT);
 
     const matrix = normalizeRangeToMatrix(textOrRange);
-    const isMultiCell = Array.isArray(matrix) && matrix.length * ((matrix[0] || []).length || 0) > 1;
     const flatCells = [];
     for (const row of matrix) {
       for (const cell of row) {
@@ -768,27 +896,52 @@ export async function EXTRACT(textOrRange, instruction, options) {
       }
     }
 
-    if (flatCells.length === 0) return isMultiCell ? fillMatrix(matrix, errorCode(ERR.BAD_INPUT)) : errorCode(ERR.BAD_INPUT);
+    if (flatCells.length === 0) return fillMatrix(matrix, errorCode(ERR.BAD_INPUT));
+
+    // Fast-path: email extraction is far more reliable (and cheaper) with a deterministic regex.
+    if (isEmailLikeInstruction(instr)) {
+      if (flatCells.length === 1) {
+        const emails = extractEmailsFromText(flatCells[0], instr);
+        if (!emails.length) return [[errorCode(ERR.NOT_FOUND)]];
+        return emails.map((e) => [truncateForCell(e)]);
+      }
+
+      let i = 0;
+      return matrix.map((row) =>
+        row.map(() => {
+          const emails = extractEmailsFromText(flatCells[i++], instr);
+          if (!emails.length) return errorCode(ERR.NOT_FOUND);
+          return truncateForCell(emails[0]);
+        })
+      );
+    }
 
     if (flatCells.length === 1) {
       const raw = flatCells[0];
-      if (!raw.trim()) return errorCode(ERR.NOT_FOUND);
+      if (!raw.trim()) return [[errorCode(ERR.NOT_FOUND)]];
 
       const res = await callGemini({
         system: sysExtract(instr, lang),
         user: raw,
-        options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 },
+        options: {
+          ...opt,
+          temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0,
+          responseMimeType: "application/json"
+        },
         functionName: "AI.EXTRACT"
       });
 
-      if (!res.ok) return errorCode(res.code);
+      if (!res.ok) return [[errorCode(res.code)]];
 
       const obj = extractJsonObject(res.text);
-      if (!obj || !Array.isArray(obj.items)) return errorCode(ERR.PARSE_ERROR);
+      if (!obj || !Array.isArray(obj.items)) return [[errorCode(ERR.PARSE_ERROR)]];
 
-      const items = obj.items.map((item) => lightlyCleanExtractedValue(item, instr)).filter(Boolean);
-      if (items.length === 0) return errorCode(ERR.NOT_FOUND);
+      const items = obj.items
+        .map((item) => lightlyCleanExtractedValue(item, instr))
+        .map((x) => safeString(x))
+        .filter((x) => x.trim());
 
+      if (items.length === 0) return [[errorCode(ERR.NOT_FOUND)]];
       return items.map((v) => [truncateForCell(v)]);
     }
 
@@ -814,7 +967,11 @@ export async function EXTRACT(textOrRange, instruction, options) {
     const res = await callGemini({
       system: sysExtract(instr, lang, flatCells.length),
       user,
-      options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 },
+      options: {
+        ...opt,
+        temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0,
+        responseMimeType: "application/json"
+      },
       functionName: "AI.EXTRACT"
     });
 
@@ -847,12 +1004,15 @@ export async function TABLE(prompt, contextRange, options) {
   try {
     const opt = parseOptions(options);
     const lang = opt.lang || "fr";
-    const maxRows = clamp(opt.maxRows, 1, LIMITS.MAX_TABLE_ROWS, LIMITS.MAX_TABLE_ROWS);
+    const maxRows = (() => {
+      const n = Math.floor(Number(opt.maxRows));
+      return Number.isFinite(n) && n > 0 ? n : Infinity;
+    })();
     // On retire Headers de opt ici car on veut que l'IA les génère si non fournis,
     // mais on les passe au prompt system.
     const requestedHeaders = Array.isArray(opt.headers) ? opt.headers.map((h) => safeString(h)) : null;
 
-    const ctx = contextRange ? matrixToTSV(contextRange, opt.maxContextChars || LIMITS.MAX_CONTEXT_CHARS) : "";
+    const ctx = contextRange ? matrixToTSV(contextRange, opt.maxContextChars) : "";
 
     // System Prompt forcé en mode JSON strict
     const system = [
@@ -866,7 +1026,7 @@ export async function TABLE(prompt, contextRange, options) {
     ].filter(Boolean).join("\n");
 
     const user = [
-      ctx ? `CONTEXT (TSV, may be truncated):\n${ctx}` : "",
+      ctx ? `CONTEXT (TSV):\n${ctx}` : "",
       `PROMPT:\n${coerceToTextOrJoin2D(prompt)}`
     ].filter(Boolean).join("\n\n");
 
@@ -902,7 +1062,8 @@ export async function TABLE(prompt, contextRange, options) {
       // Normalisation: on s'assure que la ligne a exactement numCols colonnes
       const cleanRow = [];
       for(let i=0; i<numCols; i++) {
-        cleanRow.push(r[i] === null || r[i] === undefined ? "" : safeString(r[i]));
+        const cell = r[i] === null || r[i] === undefined ? "" : safeString(r[i]);
+        cleanRow.push(truncateForCell(cell));
       }
       out.push(cleanRow);
     }
@@ -924,11 +1085,16 @@ export async function FILL(exampleRange, targetRange, instruction, options) {
     const targetRows = Array.isArray(targets) ? targets.length : 0;
     if (!targetRows) return [];
 
-    const maxRows = clamp(opt.maxRows, 1, LIMITS.MAX_FILL_ROWS, Math.min(LIMITS.MAX_FILL_ROWS, targetRows));
-    const rowsToFill = Math.min(targetRows, maxRows);
+    // No hard limit: fill the entire target range by default.
+    // If the user provides opt.maxRows, respect it (still only bounded by tokens/model limits).
+    const rowsToFill = (() => {
+      const n = Math.floor(Number(opt.maxRows));
+      if (Number.isFinite(n) && n > 0) return Math.min(targetRows, n);
+      return targetRows;
+    })();
 
-    const exTSV = matrixToTSV(examples, 2000);
-    const tgtTSV = matrixToTSV(targets.slice(0, rowsToFill), 4000);
+    const exTSV = matrixToTSV(examples, opt.maxExamplesChars);
+    const tgtTSV = matrixToTSV(targets.slice(0, rowsToFill), opt.maxTargetsChars);
 
     const user = [
       "INSTRUCTION:",
@@ -944,7 +1110,11 @@ export async function FILL(exampleRange, targetRange, instruction, options) {
     const res = await callGemini({
       system: sysFill(lang, rowsToFill),
       user,
-      options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 },
+      options: {
+        ...opt,
+        temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0,
+        responseMimeType: "application/json"
+      },
       functionName: "AI.FILL"
     });
 
@@ -953,8 +1123,9 @@ export async function FILL(exampleRange, targetRange, instruction, options) {
     const obj = extractJsonObject(res.text);
     if (!obj || !Array.isArray(obj.values)) return errorCode(ERR.PARSE_ERROR);
 
-    const values = obj.values.slice(0, rowsToFill).map((x) => safeString(x));
-    return values.map((v) => [truncateForCell(v, LIMITS.MAX_CELL_CHARS)]);
+    const values = obj.values.map((x) => safeString(x));
+    while (values.length < rowsToFill) values.push("");
+    return values.slice(0, rowsToFill).map((v) => [truncateForCell(v)]);
   } catch (e) {
     return errorCode(ERR.API_ERROR);
   }
@@ -965,9 +1136,9 @@ export async function FORMULA(instruction, contextRange, options) {
     const opt = parseOptions(options);
     const lang = opt.lang || "fr";
 
-    const ctx = contextRange ? matrixToTSV(contextRange, opt.maxContextChars || LIMITS.MAX_CONTEXT_CHARS) : "";
+    const ctx = contextRange ? matrixToTSV(contextRange, opt.maxContextChars) : "";
     const user = [
-      ctx ? `CONTEXT (TSV, may be truncated):\n${ctx}` : "",
+      ctx ? `CONTEXT (TSV):\n${ctx}` : "",
       `INSTRUCTION:\n${coerceToTextOrJoin2D(instruction)}`
     ]
       .filter(Boolean)

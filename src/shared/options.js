@@ -1,4 +1,4 @@
-import { DEFAULTS, ERR } from "./constants";
+import { DEFAULTS, TOKEN_LIMITS, ERR } from "./constants";
 
 export function parseOptions(optionsJson) {
   if (optionsJson === undefined || optionsJson === null) return { ok: true, value: {} };
@@ -22,19 +22,21 @@ export function parseOptions(optionsJson) {
 
 export function normalizedCommonOptions(userOptions = {}) {
   const o = userOptions && typeof userOptions === "object" ? userOptions : {};
+  const maxTokensRaw = typeof o.maxOutputTokens === "number" ? o.maxOutputTokens : (typeof o.maxTokens === "number" ? o.maxTokens : undefined);
+  const maxTokens = typeof maxTokensRaw === "number"
+    ? clamp(Math.floor(maxTokensRaw), TOKEN_LIMITS.MIN, TOKEN_LIMITS.MAX, undefined)
+    : undefined;
   const out = {
     lang: typeof o.lang === "string" ? o.lang : DEFAULTS.lang,
     model: typeof o.model === "string" ? o.model : undefined,
     temperature: typeof o.temperature === "number" ? o.temperature : DEFAULTS.temperature,
-    maxTokens: typeof o.maxTokens === "number" ? o.maxTokens : DEFAULTS.maxTokens,
+    maxTokens,
     timeoutMs: typeof o.timeoutMs === "number" ? o.timeoutMs : DEFAULTS.timeoutMs,
     retry: typeof o.retry === "number" ? Math.max(0, Math.min(3, Math.floor(o.retry))) : DEFAULTS.retry,
     cache: typeof o.cache === "string" ? o.cache : DEFAULTS.cache,
     cacheTtlSec: typeof o.cacheTtlSec === "number" ? Math.max(0, o.cacheTtlSec) : DEFAULTS.cacheTtlSec,
     debug: !!o.debug
   };
-
-  if (typeof o.maxOutputTokens === "number") out.maxTokens = o.maxOutputTokens;
   if (typeof o.timeout === "number") out.timeoutMs = o.timeout;
 
   return out;

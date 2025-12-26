@@ -119,3 +119,18 @@ button.danger { background: #d13438; color: white; border-color: #d13438; }
 .log-actions .refresh-btn {
   flex: 1;
 }
+
+.tokenControls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.tokenControls input[type="number"] {
+  width: 140px;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}

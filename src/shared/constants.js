@@ -9,20 +9,24 @@ export const GEMINI = {
   DEFAULT_MODEL: "gemini-3-flash-preview"
 };
 
+// Global output token limit (maxOutputTokens) bounds exposed in the taskpane.
+// NOTE: This controls the model OUTPUT tokens. Input/context is only limited by the model context window.
+export const TOKEN_LIMITS = {
+  MIN: 32,
+  MAX: 64000,
+  STEP: 32
+};
+
 export const LIMITS = {
-  MAX_CONTEXT_CHARS: 10000,
-  MAX_INPUT_CHARS: 12000,
-  MAX_CELL_CHARS: 32000,
+  // Excel hard limit: a cell can contain up to 32,767 characters.
+  // We enforce this only when returning a single-cell text result.
+  MAX_CELL_CHARS: 32767,
 
-  MAX_TABLE_ROWS: 100,
-  MAX_TABLE_COLS: 50,
-
-  MAX_FILL_ROWS: 200,
-  MAX_EXAMPLES: 100,
-
+  // Cache / runtime safety (not an output/content limitation)
   MEM_CACHE_ENTRIES: 200,
   MEM_CACHE_TTL_MS: 60 * 60 * 1000, // 1h
 
+  // Avoid flooding the model API with too many concurrent requests
   MAX_CONCURRENT_REQUESTS: 3
 };
 
@@ -33,6 +37,7 @@ export const DEFAULTS = {
   cache: "persistent",
   cacheTtlSec: 24 * 3600,
   temperature: 0.2,
+  // Used only when no stored setting is present and no per-formula option is provided.
   maxTokens: 2048
 };
 
