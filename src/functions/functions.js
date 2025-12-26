@@ -326,7 +326,20 @@ function sysConsistent(lang = "fr", expectedItems) {
   ].join("\n");
 }
 
-function sysSummarize(lang = "fr") {
+function sysSummarize(lang = "fr", expectedItems) {
+  if (typeof expectedItems === "number" && expectedItems > 0) {
+    return [
+      "You summarize text for spreadsheet cells.",
+      `Respond in ${lang}.`,
+      "Return STRICT JSON only (no Markdown, no code fences).",
+      `Return an object with a single key 'items' containing exactly ${expectedItems} strings in the same order as the provided cells.`,
+      "Summarize each cell independently; do not merge content across cells.",
+      "Use bullet points with '-' when it improves readability.",
+      "Keep outputs aligned with inputs. If an input is empty or whitespace-only, return an empty string for that position.",
+      "No Markdown headers. No code fences. No surrounding quotes."
+    ].join("\n");
+  }
+
   return [
     "You summarize text for a spreadsheet cell.",
     `Respond in ${lang}.`,
@@ -863,20 +876,60 @@ export async function SUMMARIZE(textOrRange, options) {
   try {
     const opt = parseOptions(options);
     const lang = opt.lang || "fr";
-    const raw = normalizeNewlines(coerceToTextOrJoin2D(textOrRange));
-    if (!raw.trim()) return "";
+
+    const matrix = normalizeRangeToMatrix(textOrRange);
+    const flatCells = [];
+    for (const row of matrix) {
+      for (const cell of row) {
+        flatCells.push(normalizeNewlines(coerceToTextOrJoin2D(cell)));
+      }
+    }
+
+    if (flatCells.length === 0) return fillMatrix(matrix, errorCode(ERR.BAD_INPUT));
+
+    if (flatCells.length === 1) {
+      const raw = flatCells[0];
+      if (!raw.trim()) return [[""]];
+
+      const res = await callGemini({
+        system: sysSummarize(lang),
+        user: raw,
+        options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.2 },
+        functionName: "AI.SUMMARIZE"
+      });
+
+      if (!res.ok) return fillMatrix(matrix, errorCode(res.code));
+      return [[truncateForCell(res.text)]];
+    }
+
+    const hasContent = flatCells.some((cell) => safeString(cell).trim());
+    if (!hasContent) return matrix.map((row) => row.map(() => ""));
+
+    const userCells = flatCells
+      .map((cell, idx) => `${idx + 1}. ${cell ? cell : "<vide>"}`)
+      .join("\n");
 
     const res = await callGemini({
-      system: sysSummarize(lang),
-      user: raw,
-      options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.2 },
+      system: sysSummarize(lang, flatCells.length),
+      user: ["Cells:", userCells].join("\n"),
+      options: {
+        ...opt,
+        temperature: typeof opt.temperature === "number" ? opt.temperature : 0.2,
+        responseMimeType: "application/json"
+      },
       functionName: "AI.SUMMARIZE"
     });
 
-    if (!res.ok) return errorCode(res.code);
-    return truncateForCell(res.text);
+    if (!res.ok) return fillMatrix(matrix, errorCode(res.code));
+
+    const obj = extractJsonObject(res.text);
+    if (!obj || !Array.isArray(obj.items)) return fillMatrix(matrix, errorCode(ERR.PARSE_ERROR));
+    if (obj.items.length !== flatCells.length) return fillMatrix(matrix, errorCode(ERR.PARSE_ERROR));
+
+    let idx = 0;
+    return matrix.map((row) => row.map(() => truncateForCell(safeString(obj.items[idx++]))));
   } catch (e) {
-    return errorCode(ERR.API_ERROR);
+    return fillMatrix(normalizeRangeToMatrix(textOrRange), errorCode(ERR.API_ERROR));
   }
 }
 
