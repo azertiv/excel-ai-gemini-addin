@@ -524,8 +524,8 @@ export async function WEB(prompt, focusRange, showSource) {
 
     const focus = focusRange ? normalizeNewlines(coerceToTextOrJoin2D(focusRange)).trim() : "";
     
-    // Détection booléenne simple pour l'option lien
-    const wantsHyperlink = (() => {
+    // Détection booléenne simple pour l'option lien/source
+    const wantsSource = (() => {
       if (!showSource) return false;
       const s = String(showSource).toLowerCase().trim();
       return s === "1" || s === "true" || s === "yes" || s === "oui";
@@ -575,12 +575,10 @@ export async function WEB(prompt, focusRange, showSource) {
 
     value = truncateForCell(value);
 
-    // Si l'utilisateur veut un lien et qu'on a une URL valide
-    if (wantsHyperlink && isValidHttpUrl(source)) {
-      // Échappement des guillemets pour la formule Excel
-      const escVal = value.replace(/"/g, '""');
-      const escUrl = source.replace(/"/g, '""');
-      return `=LIEN_HYPERTEXTE("${escUrl}";"${escVal}")`;
+    // Si l'utilisateur veut la source, on renvoie un tableau spill 1x2 : valeur + source à droite
+    if (wantsSource) {
+      const src = isValidHttpUrl(source) ? source : "";
+      return [[value, src]];
     }
 
     return value;
