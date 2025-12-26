@@ -420,23 +420,21 @@ export async function WEB(prompt, focusRange, showSource) {
     if (!query) return errorCode(ERR.BAD_INPUT);
 
     const focus = focusRange ? normalizeNewlines(coerceToTextOrJoin2D(focusRange)).trim() : "";
+    
+    // Détection booléenne simple pour l'option lien
     const wantsHyperlink = (() => {
-      if (showSource === null || showSource === undefined) return false;
-      if (typeof showSource === "number") return Number(showSource) === 1;
-      const s = safeString(showSource).trim().toLowerCase();
-      if (!s) return false;
-      if (s === "1") return true;
-      return s === "true" || s === "yes" || s === "oui";
+      if (!showSource) return false;
+      const s = String(showSource).toLowerCase().trim();
+      return s === "1" || s === "true" || s === "yes" || s === "oui";
     })();
 
     const user = [
       `QUESTION: ${query}`,
       focus ? `FOCUS / ENTITY: ${focus}` : "",
-      "Return STRICT JSON with the confirmed value and the best source URL (and an optional reason if unavailable).",
-      "If the value cannot be confirmed confidently, leave value and source empty and provide a brief reason."
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+      "Return STRICT JSON with the confirmed value and the best source URL.",
+      "If the value cannot be confirmed, leave value empty.",
+      'Schema: {"value": "...", "source": "...", "reason": "..."}'
+    ].join("\n\n");
 
     const res = await callGemini({
       system: sysWeb("fr"),
@@ -444,7 +442,8 @@ export async function WEB(prompt, focusRange, showSource) {
       options: {
         temperature: 0.0,
         responseMimeType: "application/json",
-        tools: [{ googleSearchRetrieval: {} }]
+        // [CORRECTION] Syntaxe standard pour l'API publique v1beta
+        tools: [{ googleSearch: {} }] 
       },
       functionName: "AI.WEB"
     });
@@ -454,26 +453,31 @@ export async function WEB(prompt, focusRange, showSource) {
     const obj = extractJsonObject(res.text);
     if (!obj) return errorCode(ERR.PARSE_ERROR);
 
-    const isValuePrimitive = ["string", "number", "boolean"].includes(typeof obj.value);
-    const isSourcePrimitive = ["string", "number", "boolean"].includes(typeof obj.source);
-    const rawValue = isValuePrimitive ? safeString(obj.value).trim() : "";
-    const source = isSourcePrimitive ? safeString(obj.source).trim() : "";
-    const reason = truncateForCell(safeString(obj.reason).trim());
+    let value = safeString(obj.value).trim();
+    let source = safeString(obj.source).trim();
+    const reason = safeString(obj.reason).trim();
 
-    const hasValidValue = Boolean(rawValue);
-    const hasValidSource = isValidHttpUrl(source);
-
-    if (!hasValidValue || !hasValidSource) {
-      if (reason) return reason;
-      return errorCode(ERR.NOT_FOUND);
+    // [CORRECTION] Si l'IA n'a pas rempli la source dans le JSON, on la prend dans les métadonnées techniques
+    if (!isValidHttpUrl(source) && res.groundingMetadata?.groundingChunks?.length > 0) {
+        // On prend la première source Web disponible
+        const firstWebChunk = res.groundingMetadata.groundingChunks.find(c => c.web?.uri);
+        if (firstWebChunk) {
+            source = firstWebChunk.web.uri;
+        }
     }
 
-    const value = truncateForCell(rawValue);
+    if (!value) {
+      return reason || errorCode(ERR.NOT_FOUND);
+    }
 
-    if (wantsHyperlink) {
-      const escapedValue = value.replace(/"/g, '""');
-      const escapedUrl = source.replace(/"/g, '""');
-      return `=HYPERLINK("${escapedUrl}";"${escapedValue}")`;
+    value = truncateForCell(value);
+
+    // Si l'utilisateur veut un lien et qu'on a une URL valide
+    if (wantsHyperlink && isValidHttpUrl(source)) {
+      // Échappement des guillemets pour la formule Excel
+      const escVal = value.replace(/"/g, '""');
+      const escUrl = source.replace(/"/g, '""');
+      return `=LIEN_HYPERTEXTE("${escUrl}";"${escVal}")`;
     }
 
     return value;
