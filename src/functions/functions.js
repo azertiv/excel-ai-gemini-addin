@@ -426,7 +426,7 @@ async function callGemini({ system, user, options, functionName }) {
   }
 
   const timeoutMs = typeof opt.timeoutMs === "number"
-    ? clamp(opt.timeoutMs, 1000, 60000, DEFAULTS.timeoutMs)
+    ? clamp(opt.timeoutMs, 1000, 120000, DEFAULTS.timeoutMs)
     : DEFAULTS.timeoutMs;
 
   const retry = typeof opt.retry === "number"

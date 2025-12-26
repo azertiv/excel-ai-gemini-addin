@@ -13,7 +13,7 @@ export const GEMINI = {
 // NOTE: This controls the model OUTPUT tokens. Input/context is only limited by the model context window.
 export const TOKEN_LIMITS = {
   MIN: 32,
-  MAX: 64000,
+  MAX: 128000,
   STEP: 32
 };
 
@@ -32,7 +32,7 @@ export const LIMITS = {
 
 export const DEFAULTS = {
   lang: "fr",
-  timeoutMs: 60000,
+  timeoutMs: 120000,
   retry: 1,
   cache: "persistent",
   cacheTtlSec: 24 * 3600,

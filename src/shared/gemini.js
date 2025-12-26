@@ -239,7 +239,7 @@ export async function geminiGenerate(req) {
   const generationConfig = req.generationConfig || {};
 
   // Logic priority: req.generationConfig.maxOutputTokens > storage setting > DEFAULTS.maxTokens
-  // Clamp to the UI bounds (32..64000) to avoid silent provider errors.
+  // Clamp to the UI bounds (32..128000) to avoid silent provider errors.
   let maxTokensRaw = DEFAULTS.maxTokens;
   if (typeof generationConfig.maxOutputTokens === "number") {
     maxTokensRaw = generationConfig.maxOutputTokens;
