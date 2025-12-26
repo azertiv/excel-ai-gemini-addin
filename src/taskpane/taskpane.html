@@ -8,15 +8,31 @@
   <link rel="stylesheet" href="taskpane.css" />
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
   <style>
-    /* Styles spécifiques pour les onglets et les logs */
-    .tabs { display: flex; border-bottom: 1px solid #e5e5e5; margin-bottom: 12px; cursor: pointer; }
-    .tab { padding: 8px 16px; font-weight: 600; font-size: 13px; color: #666; transition: color 0.2s; }
-    .tab:hover { color: #333; }
-    .tab.active { color: #0f6cbd; border-bottom: 2px solid #0f6cbd; }
-
-    .tab-content { display: none; }
-    .tab-content.active { display: block; animation: fadeIn 0.3s; }
-    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    /* Styles spécifiques pour la page d'accueil et les blocs repliables */
+    .section { margin-bottom: 14px; }
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 6px 0;
+    }
+    .section-title { font-size: 15px; font-weight: 700; color: #0f6cbd; }
+    .section-subtitle { font-size: 12px; color: #4a4a4a; }
+    .collapse-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      background: #f4f8ff;
+      border: 1px solid #d7e6ff;
+      border-radius: 999px;
+      color: #0f6cbd;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .collapse-btn .chevron { font-size: 11px; }
+    .section-body.collapsed { display: none; }
 
     .log-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
     .stat-box { background: #f0f9ff; padding: 10px; border-radius: 6px; text-align: center; border: 1px solid #cceeff; }
@@ -161,17 +177,16 @@
 <body>
   <div class="container">
     <h1>AI Functions (Gemini)</h1>
-
-    <div class="tabs">
-      <div class="tab active" data-target="settings">Configuration</div>
-      <div class="tab" data-target="logs">Logs & Coûts</div>
-    </div>
-
-    <!-- TAB 1: SETTINGS -->
-    <div id="settings" class="tab-content active">
-        <p class="muted">
-          Shared Runtime actif. Les fonctions sont exécutées localement.
-        </p>
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Configuration & Tests</div>
+          <div class="section-subtitle">Clé API, limites de tokens et diagnostic rapide</div>
+        </div>
+        <button class="collapse-btn" data-toggle-section="settingsSection"><span class="collapse-label">Réduire</span><span class="chevron">▲</span></button>
+      </div>
+      <div id="settingsSection" class="section-body">
+        <p class="muted">Shared Runtime actif. Les fonctions sont exécutées localement.</p>
 
         <div class="card">
             <div class="row">
@@ -181,9 +196,9 @@
 
             <div class="row" style="margin-top:10px;">
                 <label for="maxTokensSlider">Limite de tokens (sortie): <span id="maxTokensValue" class="mono">2048</span></label>
-                <input id="maxTokensSlider" type="range" min="32" max="64000" step="32" />
-                <input id="maxTokensInput" type="number" min="32" max="64000" step="32" placeholder="32–64000" />
-                <div class="muted" style="margin-top:4px;">Astuce: augmentez cette valeur pour les grosses tables / gros ranges (ex. 100 lignes).</div>
+                <input id="maxTokensSlider" type="range" />
+                <input id="maxTokensInput" type="number" min="64" max="64000" step="64" placeholder="64–64000" />
+                <div class="muted" style="margin-top:4px;">Paliers fixes : 64 → 128 → 256 → ... → 64000. Augmentez pour les tables volumineuses.</div>
             </div>
 
             <div class="buttons">
@@ -200,29 +215,74 @@
             <div id="message" class="message"></div>
             <pre id="testDiagnostics" class="diag mono" style="display:none"></pre>
         </div>
+      </div>
+    </div>
 
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Usage & Logs</div>
+          <div class="section-subtitle">Suivi tokens, coûts et diagnostic heure courante</div>
+        </div>
+        <button class="collapse-btn" data-toggle-section="logsSection"><span class="collapse-label">Réduire</span><span class="chevron">▲</span></button>
+      </div>
+      <div id="logsSection" class="section-body">
         <div class="card">
-            <h2 id="featuresHeader" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center;">
-                Features <span id="featuresToggle">▼</span>
-            </h2>
-            <div id="featuresContent" style="display:none;">
-                <div class="feature-note">
-                    Les fonctions acceptent un paramètre <code>options</code> JSON (par ex. <code>{ "lang": "fr", "maxTokens": 1024, "temperature": 0.2 }</code>) pour contrôler la langue, le ton ou le cache.
+            <div class="log-stats">
+                <div class="stat-box">
+                    <div class="stat-val" id="totalTokens">0</div>
+                    <div class="stat-lbl">Tokens (In+Out)</div>
                 </div>
+                <div class="stat-box">
+                    <div class="stat-val" id="estCost">$0.0000</div>
+                    <div class="stat-lbl">Coût Estimé</div>
+                </div>
+            </div>
 
-                <div class="feature-grid">
-                    <div class="feature-card">
-                        <div class="feature-title">
-                            <span>=AI.ASK</span>
-                            <span class="feature-pill">Q&A</span>
-                        </div>
-                        <p class="feature-desc">Pose une question libre avec contexte facultatif pour obtenir une réponse textuelle nette.</p>
-                        <ul class="feature-usage">
-                            <li><strong>Syntaxe :</strong> <code>=AI.ASK(prompt, [contexte], [options])</code></li>
-                            <li><strong>Utilisation :</strong> ajoutez une plage en contexte pour guider la réponse (FAQ, extraits).</li>
-                            <li><strong>Retour :</strong> texte court prêt à coller dans une cellule.</li>
-                        </ul>
+            <div class="chart-box">
+                <div class="chart-header">Usage dernière heure</div>
+                <canvas id="usageChart" class="usage-chart" height="170"></canvas>
+            </div>
+
+            <div class="log-list" id="logList">
+                <div style="padding:15px; text-align:center; color:#999; font-style:italic;">Aucune requête récente</div>
+            </div>
+
+            <div class="log-actions">
+                <button id="refreshLogsBtn" class="refresh-btn">Rafraîchir les logs</button>
+                <button id="resetLogsBtn" class="refresh-btn danger">Réinitialiser les logs</button>
+            </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Fonctions disponibles</div>
+          <div class="section-subtitle">Rappels rapides des commandes AI.*</div>
+        </div>
+        <button class="collapse-btn" data-toggle-section="featuresSection"><span class="collapse-label">Réduire</span><span class="chevron">▲</span></button>
+      </div>
+      <div id="featuresSection" class="section-body">
+        <div class="card">
+            <div class="feature-note">
+                Les fonctions acceptent un paramètre <code>options</code> JSON (par ex. <code>{ "lang": "fr", "maxTokens": 1024, "temperature": 0.2 }</code>) pour contrôler la langue, le ton ou le cache.
+            </div>
+
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <div class="feature-title">
+                        <span>=AI.ASK</span>
+                        <span class="feature-pill">Q&A</span>
                     </div>
+                    <p class="feature-desc">Pose une question libre avec contexte facultatif pour obtenir une réponse textuelle nette.</p>
+                    <ul class="feature-usage">
+                        <li><strong>Syntaxe :</strong> <code>=AI.ASK(prompt, [contexte], [options])</code></li>
+                        <li><strong>Utilisation :</strong> ajoutez une plage en contexte pour guider la réponse (FAQ, extraits).</li>
+                        <li><strong>Retour :</strong> texte court prêt à coller dans une cellule.</li>
+                    </ul>
+                </div>
 
                     <div class="feature-card">
                         <div class="feature-title">
@@ -367,36 +427,6 @@
                         </ul>
                     </div>
                 </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- TAB 2: LOGS -->
-    <div id="logs" class="tab-content">
-        <div class="card">
-            <div class="log-stats">
-                <div class="stat-box">
-                    <div class="stat-val" id="totalTokens">0</div>
-                    <div class="stat-lbl">Tokens (In+Out)</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-val" id="estCost">$0.0000</div>
-                    <div class="stat-lbl">Coût Estimé</div>
-                </div>
-            </div>
-
-            <div class="chart-box">
-                <div class="chart-header">Usage dernière heure</div>
-                <canvas id="usageChart" class="usage-chart" height="160"></canvas>
-            </div>
-
-            <div class="log-list" id="logList">
-                <div style="padding:15px; text-align:center; color:#999; font-style:italic;">Aucune requête récente</div>
-            </div>
-
-            <div class="log-actions">
-                <button id="refreshLogsBtn" class="refresh-btn">Rafraîchir les logs</button>
-                <button id="resetLogsBtn" class="refresh-btn danger">Réinitialiser les logs</button>
             </div>
         </div>
     </div>

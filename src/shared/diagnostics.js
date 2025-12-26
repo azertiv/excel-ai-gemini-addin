@@ -114,7 +114,21 @@ export function resetDiagnosticsLogs() {
   state.diagnostics.totalInputTokens = 0;
   state.diagnostics.totalOutputTokens = 0;
   state.diagnostics.estimatedCostUSD = 0;
+  state.diagnostics.requests = 0;
+  state.diagnostics.success = 0;
+  state.diagnostics.failures = 0;
+  state.diagnostics.retries = 0;
+  state.diagnostics.cacheHits = 0;
+  state.diagnostics.cacheMisses = 0;
+  state.diagnostics.dedupHits = 0;
   state.diagnostics.startedAt = new Date().toISOString();
+  state.diagnostics.lastRequestAt = "";
+  state.diagnostics.lastSuccessAt = "";
+  state.diagnostics.lastErrorAt = "";
+  state.diagnostics.lastErrorCode = "";
+  state.diagnostics.lastErrorMessage = "";
+  state.diagnostics.lastModel = "";
+  state.diagnostics.lastLatencyMs = 0;
 }
 
 export function getDiagnosticsSnapshot() {
