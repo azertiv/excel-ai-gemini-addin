@@ -175,6 +175,14 @@ function normalizeMatrixInput(value) {
   return [[value]];
 }
 
+function fillMatrix(matrix, value) {
+  if (!Array.isArray(matrix)) return [[value]];
+  return matrix.map((row) => {
+    if (Array.isArray(row)) return row.map(() => value);
+    return [value];
+  });
+}
+
 function extractJsonObject(text) {
   const s = String(text || "").trim();
   if (!s) return null;
@@ -743,7 +751,7 @@ export async function SUMMARIZE(textOrRange, options) {
   }
 }
 
-export async function EXTRACT(instruction, textOrRange, options) {
+export async function EXTRACT(textOrRange, instruction, options) {
   try {
     const opt = parseOptions(options);
     const lang = opt.lang || "fr";
@@ -752,6 +760,7 @@ export async function EXTRACT(instruction, textOrRange, options) {
     if (!instr) return errorCode(ERR.BAD_INPUT);
 
     const matrix = normalizeRangeToMatrix(textOrRange);
+    const isMultiCell = Array.isArray(matrix) && matrix.length * ((matrix[0] || []).length || 0) > 1;
     const flatCells = [];
     for (const row of matrix) {
       for (const cell of row) {
@@ -759,7 +768,7 @@ export async function EXTRACT(instruction, textOrRange, options) {
       }
     }
 
-    if (flatCells.length === 0) return errorCode(ERR.BAD_INPUT);
+    if (flatCells.length === 0) return isMultiCell ? fillMatrix(matrix, errorCode(ERR.BAD_INPUT)) : errorCode(ERR.BAD_INPUT);
 
     if (flatCells.length === 1) {
       const raw = flatCells[0];
@@ -809,11 +818,11 @@ export async function EXTRACT(instruction, textOrRange, options) {
       functionName: "AI.EXTRACT"
     });
 
-    if (!res.ok) return errorCode(res.code);
+    if (!res.ok) return fillMatrix(matrix, errorCode(res.code));
 
     const obj = extractJsonObject(res.text);
-    if (!obj || !Array.isArray(obj.items)) return errorCode(ERR.PARSE_ERROR);
-    if (obj.items.length !== flatCells.length) return errorCode(ERR.PARSE_ERROR);
+    if (!obj || !Array.isArray(obj.items)) return fillMatrix(matrix, errorCode(ERR.PARSE_ERROR));
+    if (obj.items.length !== flatCells.length) return fillMatrix(matrix, errorCode(ERR.PARSE_ERROR));
 
     const cleaned = obj.items.map((item) => lightlyCleanExtractedValue(item, instr));
     let idx = 0;
@@ -825,7 +834,7 @@ export async function EXTRACT(instruction, textOrRange, options) {
       })
     );
   } catch (e) {
-    return errorCode(ERR.API_ERROR);
+    return fillMatrix(normalizeRangeToMatrix(textOrRange), errorCode(ERR.API_ERROR));
   }
 }
 
