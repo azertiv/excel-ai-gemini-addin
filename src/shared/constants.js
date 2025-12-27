@@ -1,12 +1,13 @@
 export const STORAGE = {
   API_KEY: "AI_OPENAI_API_KEY_V1",
+  BASE_URL: "AI_OPENAI_BASE_URL_V1",
   MAX_TOKENS: "AI_OPENAI_MAX_TOKENS_V1",
   PERSIST_CACHE_INDEX: "AI_PERSIST_CACHE_INDEX_V1"
 };
 
 export const OPENAI = {
   BASE_URL: "https://api.openai.com/v1",
-  DEFAULT_MODEL: "gpt-4o-mini"
+  DEFAULT_MODEL: "gpt-5.0-mini"
 };
 
 // Global output token limit (maxOutputTokens) bounds exposed in the taskpane.

@@ -1,6 +1,6 @@
 // src/taskpane/taskpane.js
 
-import { getApiKey, setApiKey, clearApiKey, getMaxTokens, setMaxTokens, storageBackend } from "../shared/storage";
+import { getApiKey, setApiKey, clearApiKey, getMaxTokens, setMaxTokens, getBaseUrl, setBaseUrl, storageBackend } from "../shared/storage";
 import { openaiMinimalTest } from "../shared/openai";
 import { getDiagnosticsSnapshot, resetDiagnosticsLogs } from "../shared/diagnostics";
 import { DEFAULTS, TOKEN_LIMITS } from "../shared/constants";
@@ -410,12 +410,17 @@ function formatTestDiagnostics(res) {
 async function refreshKeyStatus() {
   const key = (await getApiKey()) || "";
   const maxTokens = await getMaxTokens();
+  const baseUrl = await getBaseUrl();
   const backend = await storageBackend();
 
   els.keyStatus.textContent = key ? "OK" : "MISSING";
   els.keyStatus.className = key ? "status ok" : "status missing";
 
   setTokenUIValue(maxTokens ?? DEFAULTS.maxTokens);
+
+  if (els.baseUrlInput) {
+    els.baseUrlInput.value = baseUrl === "https://api.openai.com/v1" ? "" : baseUrl;
+  }
 
   els.backend.textContent =
     backend === "office" ? "OfficeRuntime.storage" :
@@ -431,6 +436,7 @@ function setMessage(msg, kind = "info") {
 async function onSave() {
   try {
     const v = (els.apiKeyInput.value || "").trim();
+    const baseUrl = (els.baseUrlInput.value || "").trim();
     const sliderTokens = els.maxTokensSlider ? sliderValueToTokens(els.maxTokensSlider.value) : undefined;
     const rawTokenInput = (els.maxTokensInput?.value || "").trim();
     const preferredValue = rawTokenInput !== "" ? rawTokenInput : sliderTokens;
@@ -447,6 +453,7 @@ async function onSave() {
         }
     }
 
+    await setBaseUrl(baseUrl);
     await setMaxTokens(t);
 
     setMessage("Configuration sauvegardée.", "ok");
@@ -503,6 +510,7 @@ async function onTest() {
 function wireUi() {
   els = {
     apiKeyInput: $("apiKeyInput"),
+    baseUrlInput: $("baseUrlInput"),
     maxTokensInput: $("maxTokensInput"),
     maxTokensSlider: $("maxTokensSlider"),
     maxTokensValue: $("maxTokensValue"),

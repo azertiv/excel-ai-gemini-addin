@@ -218,6 +218,12 @@
             </div>
 
             <div class="row" style="margin-top:10px;">
+                <label for="baseUrlInput">Base URL (optionnel)</label>
+                <input id="baseUrlInput" type="text" placeholder="https://api.openai.com/v1" />
+                <div class="muted" style="margin-top:4px;">Laissez vide pour le défaut (OpenAI). Modifiez pour utiliser un proxy (ex: GPTBots).</div>
+            </div>
+
+            <div class="row" style="margin-top:10px;">
                 <label for="maxTokensSlider">Limite de tokens (sortie): <span id="maxTokensValue" class="mono">2048</span></label>
                 <input id="maxTokensSlider" type="range" />
                 <input id="maxTokensInput" type="number" min="64" max="128000" step="64" placeholder="64–128000" />

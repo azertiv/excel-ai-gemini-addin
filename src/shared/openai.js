@@ -1,7 +1,7 @@
 // src/shared/openai.js
 
 import { OPENAI, DEFAULTS, LIMITS, TOKEN_LIMITS, ERR, STORAGE } from "./constants";
-import { getApiKey, getMaxTokens, getItem, setItem, removeItem } from "./storage";
+import { getApiKey, getMaxTokens, getBaseUrl, getItem, setItem, removeItem } from "./storage";
 import { LRUCache } from "./lru";
 import { hashKey } from "./hash";
 import { diagInc, diagSet, diagError, diagSuccess, diagTrackRequest, getSharedState } from "./diagnostics";
@@ -330,7 +330,8 @@ export async function openaiGenerate(req) {
   const p = (async () => {
     const release = await ST.semaphore.acquire();
     try {
-      const url = `${OPENAI.BASE_URL}/chat/completions`;
+      const baseUrl = await getBaseUrl();
+      const url = `${baseUrl}/chat/completions`;
       const timeoutMs = Number.isFinite(req.timeoutMs) ? req.timeoutMs : DEFAULTS.timeoutMs;
       const retries = Number.isFinite(req.retry) ? Math.max(0, Math.min(3, Math.floor(req.retry))) : DEFAULTS.retry;
 

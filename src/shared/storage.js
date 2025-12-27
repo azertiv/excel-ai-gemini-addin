@@ -1,4 +1,4 @@
-import { STORAGE, TOKEN_LIMITS } from "./constants";
+import { STORAGE, TOKEN_LIMITS, OPENAI } from "./constants";
 import { diagSet } from "./diagnostics";
 
 let _officeReadyPromise = null;
@@ -139,5 +139,36 @@ export async function setMaxTokens(val) {
 
   _maxTokensLoaded = true;
   _maxTokensLoadPromise = null;
+  return true;
+}
+
+let _baseUrlLoaded = false;
+let _baseUrlValue = "";
+let _baseUrlLoadPromise = null;
+
+export async function getBaseUrl() {
+  if (_baseUrlLoaded) return _baseUrlValue;
+  if (_baseUrlLoadPromise) return await _baseUrlLoadPromise;
+
+  _baseUrlLoadPromise = (async () => {
+    const v = (await getItem(STORAGE.BASE_URL)) || "";
+    const clean = typeof v === "string" ? v.trim() : "";
+    _baseUrlValue = clean || OPENAI.BASE_URL;
+    _baseUrlLoaded = true;
+    return _baseUrlValue;
+  })();
+
+  return await _baseUrlLoadPromise;
+}
+
+export async function setBaseUrl(url) {
+  const clean = (url || "").trim();
+  _baseUrlValue = clean || OPENAI.BASE_URL;
+  _baseUrlLoaded = true;
+  _baseUrlLoadPromise = null;
+
+  if (!clean) await removeItem(STORAGE.BASE_URL);
+  else await setItem(STORAGE.BASE_URL, clean);
+
   return true;
 }
