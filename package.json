@@ -2,7 +2,7 @@
   "name": "excel-ai-gemini-addin",
   "version": "0.1.0",
   "private": true,
-  "description": "Excel Custom Functions (AI namespace) powered by Google Gemini API (no backend).",
+  "description": "Excel Custom Functions (AI namespace) powered by OpenAI GPT 5.0 Mini (no backend).",
   "scripts": {
     "dev-server": "webpack serve --mode development",
     "build": "webpack --mode production",

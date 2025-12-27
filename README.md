@@ -1,4 +1,4 @@
-# excel-ai-gemini-addin
+# excel-ai-gpt-addin
 
 ## Caching des fonctions IA
 

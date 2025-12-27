@@ -4,7 +4,7 @@
     {
       "id": "AI.ASK",
       "name": "ASK",
-      "description": "Ask Gemini with optional context range.",
+      "description": "Ask GPT (OpenAI) with optional context range.",
       "parameters": [
         { "name": "prompt", "description": "Question or instruction.", "type": "string", "dimensionality": "scalar" },
         { "name": "contextRange", "description": "Optional range used as context (values).", "type": "any", "dimensionality": "matrix", "optional": true },
@@ -133,14 +133,14 @@
     {
       "id": "AI.KEYSTATUS",
       "name": "KEY_STATUS",
-      "description": "Return OK if a Gemini API key is present, else MISSING.",
+      "description": "Return OK if an OpenAI API key is present, else MISSING.",
       "parameters": [],
       "result": { "type": "string", "dimensionality": "scalar" }
     },
     {
       "id": "AI.TEST",
       "name": "TEST",
-      "description": "Perform a minimal API call to Gemini and return OK or an error code.",
+      "description": "Perform a minimal API call to OpenAI and return OK or an error code.",
       "parameters": [
         { "name": "options", "description": "Optional JSON options (model, timeoutMs...).", "type": "string", "dimensionality": "scalar", "optional": true }
       ],

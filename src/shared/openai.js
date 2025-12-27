@@ -1,6 +1,6 @@
-// src/shared/gemini.js
+// src/shared/openai.js
 
-import { GEMINI, DEFAULTS, LIMITS, TOKEN_LIMITS, ERR, STORAGE } from "./constants";
+import { OPENAI, DEFAULTS, LIMITS, TOKEN_LIMITS, ERR, STORAGE } from "./constants";
 import { getApiKey, getMaxTokens, getItem, setItem, removeItem } from "./storage";
 import { LRUCache } from "./lru";
 import { hashKey } from "./hash";
@@ -64,26 +64,12 @@ function isRetriableHttpStatus(status) {
   return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
 }
 
-function looksTooLarge(message) {
-  const m = String(message || "").toLowerCase();
-  // Common patterns returned by Google APIs when a request exceeds payload/context limits.
-  return (
-    m.includes("too large") ||
-    m.includes("exceeds") ||
-    m.includes("exceed") ||
-    m.includes("maximum") && m.includes("token") ||
-    m.includes("context") && m.includes("limit") ||
-    m.includes("request payload") ||
-    m.includes("payload size")
-  );
-}
-
 function classifyHttpError(status, message) {
   if (status === 401 || status === 403) return ERR.AUTH;
   if (status === 408) return ERR.TIMEOUT;
   if (status === 429) return ERR.RATE_LIMIT;
   if (status === 413) return ERR.TOO_LARGE;
-  if (status === 400 && looksTooLarge(message)) return ERR.TOO_LARGE;
+  if (status === 400 && (message || "").toLowerCase().includes("max_tokens")) return ERR.TOO_LARGE;
   return ERR.API_ERROR;
 }
 
@@ -106,55 +92,49 @@ async function fetchWithTimeout(url, fetchOptions, timeoutMs) {
   ]);
 }
 
-function extractCandidateText(json) {
-  const candidates = json?.candidates;
-  if (!Array.isArray(candidates) || candidates.length === 0) return { text: "", candidatesCount: 0 };
+function extractChoiceText(json) {
+  const first = json?.choices?.[0];
+  if (!first) return { text: "", finishReason: undefined, choicesCount: 0 };
 
-  const first = candidates[0];
-  const content = first?.content;
-  const parts = Array.isArray(content)
-    ? content.flatMap((c) => (Array.isArray(c?.parts) ? c.parts : [])).filter(Boolean)
-    : (Array.isArray(content?.parts) ? content.parts : []);
+  const content = first.message?.content;
+  let rendered = "";
 
-  if (!Array.isArray(parts) || parts.length === 0) {
-    return { text: "", candidatesCount: candidates.length, finishReason: first?.finishReason };
+  if (typeof content === "string") {
+    rendered = content;
+  } else if (Array.isArray(content)) {
+    rendered = content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (typeof part?.text === "string") return part.text;
+        if (part?.type === "text" && typeof part?.text === "string") return part.text;
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
   }
 
-  const rendered = parts
-    .map((p) => {
-      if (typeof p?.text === "string") return p.text;
-      if (p?.functionCall) {
-        const name = p.functionCall.name || "functionCall";
-        const args = p.functionCall.args ? `(${JSON.stringify(p.functionCall.args)})` : "";
-        return `${name}${args}`;
-      }
-      return "";
-    })
-    .filter(Boolean)
-    .join("\n");
-
-  return { text: rendered, candidatesCount: candidates.length, finishReason: first?.finishReason };
+  return { text: rendered, finishReason: first.finish_reason, choicesCount: Array.isArray(json?.choices) ? json.choices.length : 0 };
 }
 
 function isBlockedResponse(json) {
-  if (json?.promptFeedback?.blockReason) return true;
-  const finish = json?.candidates?.[0]?.finishReason;
-  if (finish && String(finish).toUpperCase().includes("SAFETY")) return true;
-  return false;
+  const finish = json?.choices?.[0]?.finish_reason;
+  if (!finish) return false;
+  return String(finish).toLowerCase().includes("content_filter");
 }
 
 function buildDiagnostics({ json, status = 0, latencyMs = 0, cacheKey }) {
-  const candidates = Array.isArray(json?.candidates) ? json.candidates.length : 0;
+  const usage = json?.usage || {};
   const diag = {
     httpStatus: status,
-    candidates,
-    finishReason: json?.candidates?.[0]?.finishReason,
-    blockReason: json?.promptFeedback?.blockReason,
-    safety: json?.candidates?.[0]?.safetyRatings,
-    modelVersion: json?.modelVersion,
-    usage: json?.usageMetadata,
+    choices: Array.isArray(json?.choices) ? json.choices.length : 0,
+    finishReason: json?.choices?.[0]?.finish_reason,
     cacheKey,
-    latencyMs
+    latencyMs,
+    usage: {
+      promptTokenCount: usage.prompt_tokens,
+      candidatesTokenCount: usage.completion_tokens
+    },
+    model: json?.model
   };
   return diag;
 }
@@ -217,7 +197,7 @@ async function persistDelete(cacheKey) {
 }
 
 // --- MAIN GENERATE ---
-export async function geminiGenerate(req) {
+export async function openaiGenerate(req) {
   const started = Date.now();
   diagInc("requests", 1);
   diagSet("lastRequestAt", new Date().toISOString());
@@ -226,11 +206,11 @@ export async function geminiGenerate(req) {
   if (!apiKey) {
     diagError(ERR.KEY_MISSING, "API key missing");
     diagTrackRequest({ success: false, code: ERR.KEY_MISSING, message: "API key missing", latencyMs: 0 });
-    return { ok: false, code: ERR.KEY_MISSING, message: "Gemini API key missing" };
+    return { ok: false, code: ERR.KEY_MISSING, message: "OpenAI API key missing" };
   }
 
-  const modelRaw = (req.model || GEMINI.DEFAULT_MODEL).trim();
-  const model = modelRaw.startsWith("models/") ? modelRaw.slice("models/".length) : modelRaw;
+  const modelRaw = (req.model || OPENAI.DEFAULT_MODEL).trim();
+  const model = modelRaw.startsWith("gpt-") ? modelRaw : modelRaw;
 
   const cacheMode = sanitizeCacheMode(req.cache);
   const ttlMs = Math.max(0, Number(req.cacheTtlSec || DEFAULTS.cacheTtlSec)) * 1000;
@@ -238,8 +218,6 @@ export async function geminiGenerate(req) {
 
   const generationConfig = req.generationConfig || {};
 
-  // Logic priority: req.generationConfig.maxOutputTokens > storage setting > DEFAULTS.maxTokens
-  // Clamp to the UI bounds (32..128000) to avoid silent provider errors.
   let maxTokensRaw = DEFAULTS.maxTokens;
   if (typeof generationConfig.maxOutputTokens === "number") {
     maxTokensRaw = generationConfig.maxOutputTokens;
@@ -252,34 +230,47 @@ export async function geminiGenerate(req) {
   if (!Number.isFinite(maxTokens)) maxTokens = DEFAULTS.maxTokens;
   maxTokens = Math.min(TOKEN_LIMITS.MAX, Math.max(TOKEN_LIMITS.MIN, maxTokens));
 
-  const body = {
-    systemInstruction: { role: "system", parts: [{ text: String(req.system || "") }] },
-    contents: [{ role: "user", parts: [{ text: String(req.user || "") }] }],
-    generationConfig: {
-      temperature: typeof generationConfig.temperature === "number" ? generationConfig.temperature : DEFAULTS.temperature,
-      maxOutputTokens: maxTokens
+  const messages = [];
+  messages.push({ role: "system", content: String(req.system || "") });
+  messages.push({ role: "user", content: String(req.user || "") });
+
+  const responseFormat = (() => {
+    if (req.responseJsonSchema) {
+      const name = req.responseJsonSchema?.name || "response_schema";
+      const schema = req.responseJsonSchema?.schema || req.responseJsonSchema;
+      return { type: "json_schema", json_schema: { name, schema, strict: true } };
     }
+    if (req.responseMimeType === "application/json") return { type: "json_object" };
+    return undefined;
+  })();
+
+  const body = {
+    model,
+    messages,
+    temperature: typeof generationConfig.temperature === "number" ? generationConfig.temperature : DEFAULTS.temperature,
+    max_tokens: maxTokens
   };
 
-  if (Array.isArray(req?.tools) && req.tools.length > 0) {
-    body.tools = req.tools;
+  for (const k of ["topP", "topK", "stopSequences", "candidateCount"]) {
+    if (generationConfig[k] !== undefined) {
+      if (k === "topP") body.top_p = generationConfig[k];
+    }
   }
 
-  for (const k of ["topP", "topK", "candidateCount", "stopSequences"]) {
-    if (generationConfig[k] !== undefined) body.generationConfig[k] = generationConfig[k];
-  }
-
-  if (req.responseMimeType) body.generationConfig.responseMimeType = req.responseMimeType;
-  if (req.responseJsonSchema) body.generationConfig.responseJsonSchema = req.responseJsonSchema;
+  const filteredTools = Array.isArray(req?.tools)
+    ? req.tools.filter((t) => t && typeof t === "object" && t.type === "function")
+    : [];
+  if (filteredTools.length > 0) body.tools = filteredTools;
+  if (responseFormat) body.response_format = responseFormat;
 
   const rawKey = stableStringify({
     model,
     system: req.system || "",
     user: req.user || "",
-    generationConfig: body.generationConfig,
+    generationConfig: { ...generationConfig, maxOutputTokens: maxTokens },
     responseMimeType: req.responseMimeType || "",
     responseJsonSchema: req.responseJsonSchema || null,
-    tools: req.tools || []
+    tools: body.tools || []
   });
 
   const cacheKey = await hashKey(rawKey);
@@ -339,7 +330,7 @@ export async function geminiGenerate(req) {
   const p = (async () => {
     const release = await ST.semaphore.acquire();
     try {
-      const url = `${GEMINI.BASE_URL}/models/${encodeURIComponent(model)}:generateContent`;
+      const url = `${OPENAI.BASE_URL}/chat/completions`;
       const timeoutMs = Number.isFinite(req.timeoutMs) ? req.timeoutMs : DEFAULTS.timeoutMs;
       const retries = Number.isFinite(req.retry) ? Math.max(0, Math.min(3, Math.floor(req.retry))) : DEFAULTS.retry;
 
@@ -354,7 +345,7 @@ export async function geminiGenerate(req) {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
-                "x-goog-api-key": apiKey
+                "Authorization": `Bearer ${apiKey}`
               },
               body: JSON.stringify(body)
             },
@@ -373,7 +364,6 @@ export async function geminiGenerate(req) {
             const code = classifyHttpError(status, msg);
             const lat = Date.now() - attemptStart;
 
-            // Log de l'échec
             diagTrackRequest({ success: false, code, message: msg, httpStatus: status, latencyMs: lat, model, functionName: req.functionName });
 
             if (attempt < retries && isRetriableHttpStatus(status)) {
@@ -386,51 +376,45 @@ export async function geminiGenerate(req) {
             return { ok: false, code, errorCode: code, message: msg, httpStatus: status, diagnostics };
           }
 
-          // SUCCES
           const json = await resp.json();
           const lat = Date.now() - attemptStart;
           const diagnostics = buildDiagnostics({ json, status: resp.status, cacheKey, latencyMs: lat });
 
           if (isBlockedResponse(json)) {
-            const msg = diagnostics.blockReason ? `Blocked: ${diagnostics.blockReason}` : "Blocked by safety settings";
+            const msg = diagnostics.finishReason ? `Blocked: ${diagnostics.finishReason}` : "Blocked by safety settings";
             diagError(ERR.BLOCKED, msg, resp.status);
             diagTrackRequest({ success: false, code: ERR.BLOCKED, message: msg, httpStatus: resp.status, latencyMs: lat, model, functionName: req.functionName });
             return { ok: false, code: ERR.BLOCKED, errorCode: ERR.BLOCKED, message: msg, httpStatus: resp.status, diagnostics };
           }
 
-          const { text, candidatesCount, finishReason } = extractCandidateText(json);
+          const { text, finishReason, choicesCount } = extractChoiceText(json);
           const normalizedText = typeof text === "string" ? text : "";
 
           if (!normalizedText.trim()) {
-            const msg = candidatesCount === 0 ? "Empty response" : `Empty response (finish: ${finishReason})`;
+            const msg = choicesCount === 0 ? "Empty response" : `Empty response (finish: ${finishReason})`;
             diagError(ERR.EMPTY_RESPONSE, msg, resp.status);
             diagTrackRequest({ success: false, code: ERR.EMPTY_RESPONSE, message: msg, httpStatus: resp.status, latencyMs: lat, model, functionName: req.functionName });
             return { ok: false, code: ERR.EMPTY_RESPONSE, errorCode: ERR.EMPTY_RESPONSE, message: msg, httpStatus: resp.status, diagnostics };
           }
 
-          // IMPORTANT: do not truncate the raw model output here.
-          // Many Excel functions expect to parse JSON/TSV returned by the model; truncation would corrupt it.
-          // Cell-length constraints are enforced later (when returning a single-cell string result).
           let cleaned = normalizedText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
 
           if (cacheMode !== "none") ST.memCache.set(cacheKey, cleaned);
           if (cacheMode === "persistent") await persistSet(cacheKey, cleaned);
 
           diagSuccess({ model, latencyMs: lat, cacheKey, cached: false });
-          // LOG SUCCESS COMPLET avec Usage
-          diagTrackRequest({ 
-            success: true, 
-            code: "OK", 
-            message: req.user || "", // Log prompt as message for visibility
-            usage: diagnostics.usage, // Important pour le compteur de tokens
-            latencyMs: lat, 
-            model, 
+          diagTrackRequest({
+            success: true,
+            code: "OK",
+            message: req.user || "",
+            usage: diagnostics.usage,
+            latencyMs: lat,
+            model,
             cached: false,
             functionName: req.functionName
           });
 
           return { ok: true, text: cleaned, cached: false, cacheKey, latencyMs: lat, diagnostics };
-          
         } catch (e) {
           const msg = (e?.name === "AbortError" || e?.message === "timeout") ? "Timeout" : (e?.message || "Network error");
           const code = msg === "Timeout" ? ERR.TIMEOUT : ERR.API_ERROR;
@@ -443,7 +427,7 @@ export async function geminiGenerate(req) {
 
           diagError(code, msg, 0);
           diagTrackRequest({ success: false, code, message: msg, latencyMs: lat, model, functionName: req.functionName });
-          
+
           const diagnostics = buildDiagnostics({ json: {}, status: 0, cacheKey, latencyMs: lat });
           return { ok: false, code, errorCode: code, message: msg, httpStatus: 0, diagnostics };
         }
@@ -462,12 +446,12 @@ export async function geminiGenerate(req) {
   finally { ST.inflight.delete(cacheKey); }
 }
 
-export async function geminiMinimalTest(options = {}) {
-  const res = await geminiGenerate({
+export async function openaiMinimalTest(options = {}) {
+  const res = await openaiGenerate({
     model: options.model,
     system: "You are a connectivity test. Reply with exactly: OK",
     user: "Return OK.",
-    generationConfig: { temperature: 0.0, maxOutputTokens: 1024 },
+    generationConfig: { temperature: 0.0, maxOutputTokens: 256 },
     responseMimeType: "text/plain",
     cache: "none",
     timeoutMs: options.timeoutMs,
