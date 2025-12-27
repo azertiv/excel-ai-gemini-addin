@@ -1,12 +1,26 @@
 export const STORAGE = {
   API_KEY: "AI_GEMINI_API_KEY_V1",
+  API_KEY_OPENAI: "AI_OPENAI_API_KEY_V1",
   MAX_TOKENS: "AI_GEMINI_MAX_TOKENS_V1",
-  PERSIST_CACHE_INDEX: "AI_PERSIST_CACHE_INDEX_V1"
+  PERSIST_CACHE_INDEX: "AI_PERSIST_CACHE_INDEX_V1",
+  PROVIDER: "AI_PROVIDER_V1",
+  GEMINI_MODEL: "AI_GEMINI_MODEL_V1",
+  OPENAI_MODEL: "AI_OPENAI_MODEL_V1"
+};
+
+export const PROVIDERS = {
+  GEMINI: "gemini",
+  OPENAI: "openai"
 };
 
 export const GEMINI = {
   BASE_URL: "https://generativelanguage.googleapis.com/v1beta",
-  DEFAULT_MODEL: "gemini-3-flash-preview"
+  DEFAULT_MODEL: "gemini-3.0-flash"
+};
+
+export const OPENAI = {
+  BASE_URL: "https://api.openai.com/v1",
+  DEFAULT_MODEL: "gpt-5-mini"
 };
 
 // Global output token limit (maxOutputTokens) bounds exposed in the taskpane.
@@ -37,6 +51,9 @@ export const DEFAULTS = {
   cache: "persistent",
   cacheTtlSec: 24 * 3600,
   temperature: 0.2,
+  provider: PROVIDERS.GEMINI,
+  geminiModel: GEMINI.DEFAULT_MODEL,
+  openaiModel: OPENAI.DEFAULT_MODEL,
   // Used only when no stored setting is present and no per-formula option is provided.
   maxTokens: 2048
 };

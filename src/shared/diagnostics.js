@@ -1,9 +1,14 @@
 // src/shared/diagnostics.js
 
-// Tarifs approximatifs Gemini 1.5 Flash (par million de tokens)
-// Input: $0.10 / 1M | Output: $0.40 / 1M
-const COST_INPUT_1M = 0.10;
-const COST_OUTPUT_1M = 0.40;
+import { PROVIDERS } from "./constants";
+
+// Tarifs approximatifs par million de tokens (à ajuster si besoin)
+// Valeurs par défaut: Gemini 3.0 Flash (~0.10 / 0.40), OpenAI Mini (~0.15 / 0.60).
+const COSTS = {
+  [PROVIDERS.GEMINI]: { in: 0.10, out: 0.40 },
+  [PROVIDERS.OPENAI]: { in: 0.15, out: 0.60 }
+};
+const DEFAULT_PROVIDER = PROVIDERS.GEMINI;
 
 function getGlobalState() {
   if (typeof window === "undefined") return {};
@@ -39,6 +44,7 @@ function initDiagnostics() {
     lastErrorCode: "",
     lastErrorMessage: "",
     lastModel: "",
+    lastProvider: "",
     lastLatencyMs: 0,
     
     // Logs détaillés (les 50 derniers)
@@ -50,18 +56,20 @@ initDiagnostics();
 export function diagSet(k, v) { state.diagnostics[k] = v; }
 export function diagInc(k, n = 1) { state.diagnostics[k] = (state.diagnostics[k] || 0) + n; }
 
-export function diagError(code, message, httpStatus = 0) {
+export function diagError(code, message, httpStatus = 0, provider = DEFAULT_PROVIDER) {
   state.diagnostics.lastErrorAt = new Date().toISOString();
   state.diagnostics.lastErrorCode = code || "";
   state.diagnostics.lastErrorMessage = message || "";
+  state.diagnostics.lastProvider = provider || DEFAULT_PROVIDER;
   diagInc("failures", 1);
   // On loggue aussi l'erreur dans l'historique détaillé
-  diagTrackRequest({ success: false, code, message, httpStatus });
+  diagTrackRequest({ success: false, code, message, httpStatus, provider });
 }
 
-export function diagSuccess({ model, latencyMs, cacheKey, cached } = {}) {
+export function diagSuccess({ model, latencyMs, cacheKey, cached, provider } = {}) {
   state.diagnostics.lastSuccessAt = new Date().toISOString();
   state.diagnostics.lastModel = model || state.diagnostics.lastModel;
+  state.diagnostics.lastProvider = provider || state.diagnostics.lastProvider;
   state.diagnostics.lastLatencyMs = Number.isFinite(latencyMs) ? latencyMs : state.diagnostics.lastLatencyMs;
   diagInc("success", 1);
 }
@@ -69,7 +77,7 @@ export function diagSuccess({ model, latencyMs, cacheKey, cached } = {}) {
 /**
  * Enregistre une requête terminée dans l'historique et met à jour les coûts.
  */
-export function diagTrackRequest({ success, code, message, usage, latencyMs, model, cached, httpStatus, functionName }) {
+export function diagTrackRequest({ success, code, message, usage, latencyMs, model, cached, httpStatus, functionName, provider = DEFAULT_PROVIDER }) {
   // Mise à jour des compteurs basiques si pas déjà fait par diagSuccess/diagError
   // (Note: diagSuccess/Error incrémentent déjà success/failures, ici on gère logs et coûts)
 
@@ -81,7 +89,8 @@ export function diagTrackRequest({ success, code, message, usage, latencyMs, mod
     state.diagnostics.totalInputTokens = (state.diagnostics.totalInputTokens || 0) + input;
     state.diagnostics.totalOutputTokens = (state.diagnostics.totalOutputTokens || 0) + output;
     
-    const cost = (input / 1_000_000 * COST_INPUT_1M) + (output / 1_000_000 * COST_OUTPUT_1M);
+    const costCfg = COSTS[provider] || COSTS[DEFAULT_PROVIDER];
+    const cost = (input / 1_000_000 * costCfg.in) + (output / 1_000_000 * costCfg.out);
     state.diagnostics.estimatedCostUSD = (state.diagnostics.estimatedCostUSD || 0) + cost;
   }
 
@@ -94,6 +103,7 @@ export function diagTrackRequest({ success, code, message, usage, latencyMs, mod
     functionName: functionName || "?",
     message: message || "",
     model: model || "?",
+    provider: provider || DEFAULT_PROVIDER,
     latencyMs: latencyMs || 0,
     inputTokens: input,
     outputTokens: output,
@@ -128,6 +138,7 @@ export function resetDiagnosticsLogs() {
   state.diagnostics.lastErrorCode = "";
   state.diagnostics.lastErrorMessage = "";
   state.diagnostics.lastModel = "";
+  state.diagnostics.lastProvider = "";
   state.diagnostics.lastLatencyMs = 0;
 }
 

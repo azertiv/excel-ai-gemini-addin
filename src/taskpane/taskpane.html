@@ -199,7 +199,7 @@
 
 <body>
   <div class="container">
-    <h1>AI Functions (Gemini)</h1>
+    <h1>AI Functions (Gemini / GPT)</h1>
     <div class="section">
       <div class="section-header">
         <div>
@@ -213,7 +213,21 @@
 
         <div class="card">
             <div class="row">
-                <label for="apiKeyInput">Gemini API Key</label>
+                <label for="providerSelect">Fournisseur</label>
+                <select id="providerSelect">
+                  <option value="gemini">Gemini 3.0 Flash</option>
+                  <option value="openai">GPT 5.0 Mini</option>
+                </select>
+            </div>
+
+            <div class="row">
+                <label for="modelInput">Modèle</label>
+                <input id="modelInput" type="text" placeholder="gemini-3.0-flash" autocomplete="off" />
+                <div class="muted" style="margin-top:4px;">Stocké par fournisseur. Laissez vide pour utiliser le modèle par défaut.</div>
+            </div>
+
+            <div class="row">
+                <label for="apiKeyInput">Clé API</label>
                 <input id="apiKeyInput" type="password" placeholder="Collez la clé API ici" autocomplete="off" />
             </div>
 
@@ -231,7 +245,7 @@
             </div>
 
             <div class="statusRow">
-                <div>Key status: <span id="keyStatus" class="status missing">MISSING</span></div>
+                <div>Clés: <span id="keyStatus" class="status missing">MISSING</span></div>
                 <div>Backend: <span id="backend" class="mono">...</span></div>
             </div>
 

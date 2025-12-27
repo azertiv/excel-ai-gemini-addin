@@ -1,9 +1,9 @@
 // src/taskpane/taskpane.js
 
-import { getApiKey, setApiKey, clearApiKey, getMaxTokens, setMaxTokens, storageBackend } from "../shared/storage";
+import { getApiKey, setApiKey, clearApiKey, getMaxTokens, setMaxTokens, storageBackend, getProvider, setProvider, getModel, setModel } from "../shared/storage";
 import { geminiMinimalTest } from "../shared/gemini";
 import { getDiagnosticsSnapshot, resetDiagnosticsLogs } from "../shared/diagnostics";
-import { DEFAULTS, TOKEN_LIMITS } from "../shared/constants";
+import { DEFAULTS, TOKEN_LIMITS, PROVIDERS, GEMINI, OPENAI } from "../shared/constants";
 
 const TOKEN_STEPS = (() => {
   const steps = [];
@@ -20,6 +20,15 @@ let els = {};
 let openLogDetails = new Set();
 
 function $(id) { return document.getElementById(id); }
+
+function normalizeProvider(p) {
+  const v = (p || "").toString().toLowerCase();
+  return v === PROVIDERS.OPENAI ? PROVIDERS.OPENAI : PROVIDERS.GEMINI;
+}
+
+function defaultModel(provider) {
+  return provider === PROVIDERS.OPENAI ? OPENAI.DEFAULT_MODEL : GEMINI.DEFAULT_MODEL;
+}
 
 function toggleSectionVisibility(targetId, collapsed) {
   const content = document.getElementById(targetId);
@@ -300,6 +309,7 @@ function updateLogsUI() {
       const funcName = log.functionName || log.code || "UNKNOWN";
       // Si log.code est different de funcName et de "OK", on peut vouloir l'afficher (ex: type d'erreur)
       const errCode = (isErr && log.code !== funcName) ? `(${log.code})` : "";
+      const providerLabel = log.provider ? `[${log.provider}]` : "";
 
       const uniqueId = log.id || Math.random().toString(36).substr(2, 9);
       const isOpen = openLogDetails.has(uniqueId);
@@ -326,7 +336,7 @@ function updateLogsUI() {
                         <span class="log-time">${formatTime(log.at)}</span>
                     </div>
                     <div class="log-model">
-                        ${log.model} ${errCode}
+                        ${providerLabel} ${log.model} ${errCode}
                     </div>
                     ${detailText ? `<div class="log-code-toggle" data-id="${uniqueId}">Afficher détails</div>` : ''}
                 </div>
@@ -396,6 +406,8 @@ function formatTestDiagnostics(res) {
   const d = res?.diagnostics || {};
   const lines = [];
 
+  if (res?.provider) lines.push(`provider: ${res.provider}`);
+  if (res?.model) lines.push(`model: ${res.model}`);
   if (res?.message) lines.push(`message: ${res.message}`);
   if (typeof d.httpStatus === "number") lines.push(`httpStatus: ${d.httpStatus}`);
   if (typeof d.candidates === "number") lines.push(`candidates: ${d.candidates}`);
@@ -408,12 +420,33 @@ function formatTestDiagnostics(res) {
 }
 
 async function refreshKeyStatus() {
-  const key = (await getApiKey()) || "";
-  const maxTokens = await getMaxTokens();
-  const backend = await storageBackend();
+  const [
+    activeProvider,
+    gemKey,
+    openaiKey,
+    maxTokens,
+    backend,
+    gemModel,
+    openaiModel
+  ] = await Promise.all([
+    getProvider(),
+    getApiKey(PROVIDERS.GEMINI),
+    getApiKey(PROVIDERS.OPENAI),
+    getMaxTokens(),
+    storageBackend(),
+    getModel(PROVIDERS.GEMINI),
+    getModel(PROVIDERS.OPENAI)
+  ]);
 
-  els.keyStatus.textContent = key ? "OK" : "MISSING";
-  els.keyStatus.className = key ? "status ok" : "status missing";
+  const provider = normalizeProvider(activeProvider);
+  const selectedKey = provider === PROVIDERS.OPENAI ? openaiKey : gemKey;
+  const modelValue = provider === PROVIDERS.OPENAI ? (openaiModel || OPENAI.DEFAULT_MODEL) : (gemModel || GEMINI.DEFAULT_MODEL);
+
+  if (els.providerSelect) els.providerSelect.value = provider;
+  if (els.modelInput) els.modelInput.value = modelValue;
+
+  els.keyStatus.textContent = `Gemini: ${gemKey ? "OK" : "MISSING"} | OpenAI: ${openaiKey ? "OK" : "MISSING"} | Actif: ${provider.toUpperCase()}`;
+  els.keyStatus.className = selectedKey ? "status ok" : "status missing";
 
   setTokenUIValue(maxTokens ?? DEFAULTS.maxTokens);
 
@@ -430,23 +463,28 @@ function setMessage(msg, kind = "info") {
 
 async function onSave() {
   try {
+    const provider = normalizeProvider(els.providerSelect?.value);
+    await setProvider(provider);
+
     const v = (els.apiKeyInput.value || "").trim();
     const sliderTokens = els.maxTokensSlider ? sliderValueToTokens(els.maxTokensSlider.value) : undefined;
     const rawTokenInput = (els.maxTokensInput?.value || "").trim();
     const preferredValue = rawTokenInput !== "" ? rawTokenInput : sliderTokens;
     const t = setTokenUIValue(preferredValue ?? DEFAULTS.maxTokens);
+    const model = (els.modelInput?.value || "").trim() || defaultModel(provider);
 
     if (v) {
-      await setApiKey(v);
+      await setApiKey(provider, v);
       els.apiKeyInput.value = "";
     } else {
-        const currentKey = await getApiKey();
+        const currentKey = await getApiKey(provider);
         if (!currentKey) {
-             setMessage("Collez une clé API Gemini valide.", "warn");
+             setMessage("Collez une clé API valide pour le fournisseur sélectionné.", "warn");
              return;
         }
     }
 
+    await setModel(provider, model);
     await setMaxTokens(t);
 
     setMessage("Configuration sauvegardée.", "ok");
@@ -459,9 +497,10 @@ async function onSave() {
 
 async function onClear() {
   try {
-    await clearApiKey();
+    const provider = normalizeProvider(els.providerSelect?.value);
+    await clearApiKey(provider);
     els.apiKeyInput.value = "";
-    setMessage("Clé supprimée.", "ok");
+    setMessage("Clé supprimée pour le fournisseur sélectionné.", "ok");
     await refreshKeyStatus();
   } catch (e) {
     console.error(e);
@@ -472,12 +511,14 @@ async function onTest() {
   setMessage("Test en cours...", "info");
   setTestDiagnostics("");
   try {
-    const res = await geminiMinimalTest({ timeoutMs: 10000 });
+    const provider = normalizeProvider(els.providerSelect?.value);
+    const model = (els.modelInput?.value || "").trim() || defaultModel(provider);
+    const res = await geminiMinimalTest({ timeoutMs: 10000, provider, model });
     if (res.ok) {
-      setMessage("Test API : OK", "ok");
+      setMessage(`Test API ${provider.toUpperCase()} : OK`, "ok");
       setTestDiagnostics(formatTestDiagnostics(res));
     } else {
-      setMessage(`Erreur : ${res.code}`, "error");
+      setMessage(`Erreur ${provider.toUpperCase()} : ${res.code}`, "error");
       setTestDiagnostics(formatTestDiagnostics(res));
     }
     // Update logs after test
@@ -490,18 +531,28 @@ async function onTest() {
   }
 }
 
-  function onResetLogs() {
-    const confirmed = window.confirm('Réinitialiser les logs et les coûts ?');
-    if (!confirmed) return;
+async function onProviderChange() {
+  const provider = normalizeProvider(els.providerSelect?.value);
+  await setProvider(provider);
+  const model = await getModel(provider);
+  if (els.modelInput) els.modelInput.value = model || defaultModel(provider);
+  await refreshKeyStatus();
+}
 
-    resetDiagnosticsLogs();
-    openLogDetails.clear();
-    updateLogsUI();
-    setMessage('Historique et compteurs remis à zéro.', 'info');
-  }
+function onResetLogs() {
+  const confirmed = window.confirm('Réinitialiser les logs et les coûts ?');
+  if (!confirmed) return;
+
+  resetDiagnosticsLogs();
+  openLogDetails.clear();
+  updateLogsUI();
+  setMessage('Historique et compteurs remis à zéro.', 'info');
+}
 
 function wireUi() {
   els = {
+    providerSelect: $("providerSelect"),
+    modelInput: $("modelInput"),
     apiKeyInput: $("apiKeyInput"),
     maxTokensInput: $("maxTokensInput"),
     maxTokensSlider: $("maxTokensSlider"),
@@ -525,6 +576,9 @@ function wireUi() {
   els.saveBtn.addEventListener("click", onSave);
   els.clearBtn.addEventListener("click", onClear);
   els.testBtn.addEventListener("click", onTest);
+  if (els.providerSelect) {
+    els.providerSelect.addEventListener("change", onProviderChange);
+  }
 
   if(els.refreshLogsBtn) {
     els.refreshLogsBtn.addEventListener("click", updateLogsUI);

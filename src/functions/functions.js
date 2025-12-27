@@ -2,8 +2,8 @@
 /* global CustomFunctions */
 
 import { geminiGenerate, geminiMinimalTest } from "../shared/gemini.js";
-import { getApiKey } from "../shared/storage.js";
-import { ERR, DEFAULTS, LIMITS, TOKEN_LIMITS } from "../shared/constants.js";
+import { getApiKey, getProvider } from "../shared/storage.js";
+import { ERR, DEFAULTS, LIMITS, TOKEN_LIMITS, PROVIDERS } from "../shared/constants.js";
 
 // ---------- helpers ----------
 
@@ -36,6 +36,11 @@ function clamp(n, min, max, fallback) {
   const x = Number(n);
   if (!Number.isFinite(x)) return fallback;
   return Math.min(max, Math.max(min, x));
+}
+
+function normalizeProvider(p) {
+  const v = (p || "").toString().toLowerCase();
+  return v === PROVIDERS.OPENAI ? PROVIDERS.OPENAI : PROVIDERS.GEMINI;
 }
 
 function isValidHttpUrl(url) {
@@ -422,6 +427,7 @@ function sysFormula(lang) {
 
 async function callGemini({ system, user, options, functionName }) {
   const opt = options || {};
+  const provider = normalizeProvider(opt.provider);
   const temperature = typeof opt.temperature === "number"
     ? clamp(opt.temperature, 0, 1, DEFAULTS.temperature)
     : DEFAULTS.temperature;
@@ -454,6 +460,7 @@ async function callGemini({ system, user, options, functionName }) {
   if (typeof maxOutputTokens === "number") generationConfig.maxOutputTokens = maxOutputTokens;
 
   const res = await geminiGenerate({
+    provider,
     model: opt.model,
     system,
     user,
@@ -476,20 +483,26 @@ async function callGemini({ system, user, options, functionName }) {
 
 export async function KEY_STATUS() {
   try {
-    const key = await getApiKey();
+    const provider = await getProvider();
+    const key = await getApiKey(provider);
     return key ? "OK" : "MISSING";
   } catch {
     return "MISSING";
   }
 }
 
-export async function TEST() {
+export async function TEST(options) {
   try {
-    const res = await geminiMinimalTest({ timeoutMs: DEFAULTS?.timeoutMs || 15000 });
+    const opt = parseOptions(options);
+    const res = await geminiMinimalTest({
+      timeoutMs: opt?.timeoutMs ?? DEFAULTS?.timeoutMs ?? 15000,
+      provider: opt?.provider,
+      model: opt?.model
+    });
     if (!res.ok) return errorCode(res.code);
     return "OK";
   } catch (e) {
-    return fillMatrix(normalizeRangeToMatrix(text), errorCode(ERR.API_ERROR));
+    return errorCode(ERR.API_ERROR);
   }
 }
 

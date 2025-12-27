@@ -1,7 +1,7 @@
 // src/shared/gemini.js
 
-import { GEMINI, DEFAULTS, LIMITS, TOKEN_LIMITS, ERR, STORAGE } from "./constants";
-import { getApiKey, getMaxTokens, getItem, setItem, removeItem } from "./storage";
+import { GEMINI, OPENAI, PROVIDERS, DEFAULTS, LIMITS, TOKEN_LIMITS, ERR, STORAGE } from "./constants";
+import { getApiKey, getMaxTokens, getItem, setItem, removeItem, getProvider, getModel } from "./storage";
 import { LRUCache } from "./lru";
 import { hashKey } from "./hash";
 import { diagInc, diagSet, diagError, diagSuccess, diagTrackRequest, getSharedState } from "./diagnostics";
@@ -25,6 +25,26 @@ function stableStringify(value) {
   };
 
   return JSON.stringify(stringify(value));
+}
+
+function normalizeProvider(p) {
+  return p === PROVIDERS.OPENAI ? PROVIDERS.OPENAI : PROVIDERS.GEMINI;
+}
+
+function stripModelPrefix(model) {
+  if (!model) return "";
+  const m = String(model).trim();
+  return m.startsWith("models/") ? m.slice("models/".length) : m;
+}
+
+async function resolveModel(provider, requestedModel) {
+  const raw = stripModelPrefix(requestedModel);
+  if (raw) return raw;
+
+  const stored = await getModel(provider);
+  if (stored) return stripModelPrefix(stored);
+
+  return provider === PROVIDERS.OPENAI ? OPENAI.DEFAULT_MODEL : stripModelPrefix(GEMINI.DEFAULT_MODEL);
 }
 
 class Semaphore {
@@ -106,7 +126,25 @@ async function fetchWithTimeout(url, fetchOptions, timeoutMs) {
   ]);
 }
 
-function extractCandidateText(json) {
+function normalizeUsage(provider, json) {
+  if (provider === PROVIDERS.OPENAI) {
+    const u = json?.usage;
+    if (!u) return undefined;
+    const prompt = Number(u.prompt_tokens) || 0;
+    const completion = Number(u.completion_tokens) || 0;
+    const total = Number(u.total_tokens) || (prompt + completion);
+    return { promptTokenCount: prompt, candidatesTokenCount: completion, totalTokenCount: total };
+  }
+
+  const u = json?.usageMetadata;
+  if (!u) return undefined;
+  const prompt = Number(u.promptTokenCount) || 0;
+  const completion = Number(u.candidatesTokenCount) || 0;
+  const total = Number(u.totalTokenCount) || (prompt + completion);
+  return { promptTokenCount: prompt, candidatesTokenCount: completion, totalTokenCount: total };
+}
+
+function extractGeminiText(json) {
   const candidates = json?.candidates;
   if (!Array.isArray(candidates) || candidates.length === 0) return { text: "", candidatesCount: 0 };
 
@@ -136,23 +174,91 @@ function extractCandidateText(json) {
   return { text: rendered, candidatesCount: candidates.length, finishReason: first?.finishReason };
 }
 
-function isBlockedResponse(json) {
+function extractOpenAIText(json) {
+  const choices = json?.choices;
+  if (!Array.isArray(choices) || choices.length === 0) return { text: "", candidatesCount: 0 };
+
+  const first = choices[0];
+  const finishReason = first?.finish_reason || first?.finishReason;
+  const message = first?.message || {};
+  const parts = [];
+
+  const content = message.content;
+  if (typeof content === "string") {
+    parts.push(content);
+  } else if (Array.isArray(content)) {
+    for (const c of content) {
+      if (typeof c?.text === "string") parts.push(c.text);
+      else if (typeof c?.content === "string") parts.push(c.content);
+      else if (typeof c?.value === "string") parts.push(c.value);
+    }
+  }
+
+  if (Array.isArray(message.tool_calls)) {
+    for (const tc of message.tool_calls) {
+      const name = tc?.function?.name || tc?.type || "tool";
+      const args = tc?.function?.arguments || "";
+      parts.push(`${name}(${args})`);
+    }
+  }
+
+  const rendered = parts.filter(Boolean).join("\n");
+  return { text: rendered, candidatesCount: choices.length, finishReason };
+}
+
+function isBlockedResponse(provider, json) {
+  if (provider === PROVIDERS.OPENAI) {
+    const finish = json?.choices?.[0]?.finish_reason || json?.choices?.[0]?.finishReason;
+    if (!finish) return false;
+    return String(finish).toLowerCase().includes("content_filter");
+  }
+
   if (json?.promptFeedback?.blockReason) return true;
   const finish = json?.candidates?.[0]?.finishReason;
   if (finish && String(finish).toUpperCase().includes("SAFETY")) return true;
   return false;
 }
 
-function buildDiagnostics({ json, status = 0, latencyMs = 0, cacheKey }) {
-  const candidates = Array.isArray(json?.candidates) ? json.candidates.length : 0;
+function normalizeToolsForOpenAI(tools) {
+  if (!Array.isArray(tools)) return [];
+  const out = [];
+  for (const t of tools) {
+    if (!t) continue;
+    if (t.type === "function" && t.function && t.function.name) {
+      out.push({ type: "function", function: t.function });
+      continue;
+    }
+    if (Array.isArray(t.functionDeclarations)) {
+      for (const fn of t.functionDeclarations) {
+        if (fn && fn.name) out.push({ type: "function", function: { name: fn.name, description: fn.description, parameters: fn.parameters } });
+      }
+    }
+  }
+  return out;
+}
+
+function buildDiagnostics({ provider, json, status = 0, latencyMs = 0, cacheKey }) {
+  const candidates = provider === PROVIDERS.OPENAI
+    ? (Array.isArray(json?.choices) ? json.choices.length : 0)
+    : (Array.isArray(json?.candidates) ? json.candidates.length : 0);
+
+  const finishReason = provider === PROVIDERS.OPENAI
+    ? (json?.choices?.[0]?.finish_reason || json?.choices?.[0]?.finishReason)
+    : json?.candidates?.[0]?.finishReason;
+
+  const blockReason = provider === PROVIDERS.OPENAI
+    ? (finishReason === "content_filter" ? "content_filter" : undefined)
+    : json?.promptFeedback?.blockReason;
+
   const diag = {
+    provider,
     httpStatus: status,
     candidates,
-    finishReason: json?.candidates?.[0]?.finishReason,
-    blockReason: json?.promptFeedback?.blockReason,
-    safety: json?.candidates?.[0]?.safetyRatings,
-    modelVersion: json?.modelVersion,
-    usage: json?.usageMetadata,
+    finishReason,
+    blockReason,
+    safety: provider === PROVIDERS.OPENAI ? undefined : json?.candidates?.[0]?.safetyRatings,
+    modelVersion: json?.modelVersion || json?.model,
+    usage: normalizeUsage(provider, json),
     cacheKey,
     latencyMs
   };
@@ -222,15 +328,16 @@ export async function geminiGenerate(req) {
   diagInc("requests", 1);
   diagSet("lastRequestAt", new Date().toISOString());
 
-  const apiKey = await getApiKey();
-  if (!apiKey) {
-    diagError(ERR.KEY_MISSING, "API key missing");
-    diagTrackRequest({ success: false, code: ERR.KEY_MISSING, message: "API key missing", latencyMs: 0 });
-    return { ok: false, code: ERR.KEY_MISSING, message: "Gemini API key missing" };
-  }
+  const provider = normalizeProvider(req?.provider || (await getProvider()));
+  const model = await resolveModel(provider, req.model);
 
-  const modelRaw = (req.model || GEMINI.DEFAULT_MODEL).trim();
-  const model = modelRaw.startsWith("models/") ? modelRaw.slice("models/".length) : modelRaw;
+  const apiKey = await getApiKey(provider);
+  if (!apiKey) {
+    const msg = `${provider === PROVIDERS.OPENAI ? "OpenAI" : "Gemini"} API key missing`;
+    diagError(ERR.KEY_MISSING, msg, 0, provider);
+    diagTrackRequest({ success: false, code: ERR.KEY_MISSING, message: msg, latencyMs: 0, provider, model, functionName: req.functionName });
+    return { ok: false, code: ERR.KEY_MISSING, message: msg, provider, model };
+  }
 
   const cacheMode = sanitizeCacheMode(req.cache);
   const ttlMs = Math.max(0, Number(req.cacheTtlSec || DEFAULTS.cacheTtlSec)) * 1000;
@@ -252,31 +359,58 @@ export async function geminiGenerate(req) {
   if (!Number.isFinite(maxTokens)) maxTokens = DEFAULTS.maxTokens;
   maxTokens = Math.min(TOKEN_LIMITS.MAX, Math.max(TOKEN_LIMITS.MIN, maxTokens));
 
-  const body = {
-    systemInstruction: { role: "system", parts: [{ text: String(req.system || "") }] },
-    contents: [{ role: "user", parts: [{ text: String(req.user || "") }] }],
+  const systemText = String(req.system || "");
+  const userText = String(req.user || "");
+  const temp = typeof generationConfig.temperature === "number" ? generationConfig.temperature : DEFAULTS.temperature;
+
+  const geminiBody = {
+    systemInstruction: { role: "system", parts: [{ text: systemText }] },
+    contents: [{ role: "user", parts: [{ text: userText }] }],
     generationConfig: {
-      temperature: typeof generationConfig.temperature === "number" ? generationConfig.temperature : DEFAULTS.temperature,
+      temperature: temp,
       maxOutputTokens: maxTokens
     }
   };
 
+  const openaiBody = {
+    model,
+    messages: [],
+    temperature: temp
+  };
+  if (systemText) openaiBody.messages.push({ role: "system", content: systemText });
+  openaiBody.messages.push({ role: "user", content: userText });
+  openaiBody.max_tokens = maxTokens;
+
   if (Array.isArray(req?.tools) && req.tools.length > 0) {
-    body.tools = req.tools;
+    if (provider === PROVIDERS.OPENAI) {
+      const converted = normalizeToolsForOpenAI(req.tools);
+      if (converted.length > 0) openaiBody.tools = converted;
+    } else {
+      geminiBody.tools = req.tools;
+    }
   }
 
   for (const k of ["topP", "topK", "candidateCount", "stopSequences"]) {
-    if (generationConfig[k] !== undefined) body.generationConfig[k] = generationConfig[k];
+    if (generationConfig[k] !== undefined) geminiBody.generationConfig[k] = generationConfig[k];
+  }
+  if (generationConfig.topP !== undefined) openaiBody.top_p = generationConfig.topP;
+  if (generationConfig.stopSequences !== undefined) openaiBody.stop = generationConfig.stopSequences;
+
+  if (req.responseMimeType) geminiBody.generationConfig.responseMimeType = req.responseMimeType;
+  if (req.responseJsonSchema) geminiBody.generationConfig.responseJsonSchema = req.responseJsonSchema;
+
+  if (req.responseJsonSchema) {
+    openaiBody.response_format = { type: "json_schema", json_schema: { name: "schema", schema: req.responseJsonSchema, strict: true } };
+  } else if (req.responseMimeType === "application/json") {
+    openaiBody.response_format = { type: "json_object" };
   }
 
-  if (req.responseMimeType) body.generationConfig.responseMimeType = req.responseMimeType;
-  if (req.responseJsonSchema) body.generationConfig.responseJsonSchema = req.responseJsonSchema;
-
   const rawKey = stableStringify({
+    provider,
     model,
-    system: req.system || "",
-    user: req.user || "",
-    generationConfig: body.generationConfig,
+    system: systemText,
+    user: userText,
+    generationConfig: geminiBody.generationConfig,
     responseMimeType: req.responseMimeType || "",
     responseJsonSchema: req.responseJsonSchema || null,
     tools: req.tools || []
@@ -290,15 +424,17 @@ export async function geminiGenerate(req) {
     if (typeof cached === "string") {
       diagInc("cacheHits", 1);
       const lat = Date.now() - started;
-      diagSuccess({ model, latencyMs: lat, cacheKey, cached: true });
-      diagTrackRequest({ success: true, code: "CACHE_MEM", model, latencyMs: lat, cached: true, functionName: req.functionName });
+      diagSuccess({ model, latencyMs: lat, cacheKey, cached: true, provider });
+      diagTrackRequest({ success: true, code: "CACHE_MEM", model, latencyMs: lat, cached: true, functionName: req.functionName, provider });
       return {
         ok: true,
         text: cached,
         cached: true,
+        provider,
+        model,
         cacheKey,
         latencyMs: lat,
-        diagnostics: { cacheKey, cached: true, cacheSource: "memory" }
+        diagnostics: { cacheKey, cached: true, cacheSource: "memory", provider }
       };
     }
     diagInc("cacheMisses", 1);
@@ -310,24 +446,26 @@ export async function geminiGenerate(req) {
       diagInc("cacheHits", 1);
       ST.memCache.set(cacheKey, pv);
       const lat = Date.now() - started;
-      diagSuccess({ model, latencyMs: lat, cacheKey, cached: true });
-      diagTrackRequest({ success: true, code: "CACHE_PERSIST", model, latencyMs: lat, cached: true, functionName: req.functionName });
+      diagSuccess({ model, latencyMs: lat, cacheKey, cached: true, provider });
+      diagTrackRequest({ success: true, code: "CACHE_PERSIST", model, latencyMs: lat, cached: true, functionName: req.functionName, provider });
       return {
         ok: true,
         text: pv,
         cached: true,
+        provider,
+        model,
         cacheKey,
         latencyMs: lat,
-        diagnostics: { cacheKey, cached: true, cacheSource: "persistent" }
+        diagnostics: { cacheKey, cached: true, cacheSource: "persistent", provider }
       };
     }
   }
 
   if (cacheOnly) {
     const lat = Date.now() - started;
-    const diagnostics = { cacheKey, cached: false, cacheOnly: true, cacheMode };
-    diagTrackRequest({ success: false, code: ERR.CACHE_MISS, message: "Cache only mode", latencyMs: lat, model, cached: false, functionName: req.functionName });
-    return { ok: false, code: ERR.CACHE_MISS, errorCode: ERR.CACHE_MISS, cacheKey, latencyMs: lat, diagnostics };
+    const diagnostics = { cacheKey, cached: false, cacheOnly: true, cacheMode, provider };
+    diagTrackRequest({ success: false, code: ERR.CACHE_MISS, message: "Cache only mode", latencyMs: lat, model, cached: false, functionName: req.functionName, provider });
+    return { ok: false, code: ERR.CACHE_MISS, errorCode: ERR.CACHE_MISS, cacheKey, latencyMs: lat, provider, diagnostics };
   }
 
   if (ST.inflight.has(cacheKey)) {
@@ -339,27 +477,37 @@ export async function geminiGenerate(req) {
   const p = (async () => {
     const release = await ST.semaphore.acquire();
     try {
-      const url = `${GEMINI.BASE_URL}/models/${encodeURIComponent(model)}:generateContent`;
       const timeoutMs = Number.isFinite(req.timeoutMs) ? req.timeoutMs : DEFAULTS.timeoutMs;
       const retries = Number.isFinite(req.retry) ? Math.max(0, Math.min(3, Math.floor(req.retry))) : DEFAULTS.retry;
+
+      const url = provider === PROVIDERS.OPENAI
+        ? `${OPENAI.BASE_URL}/chat/completions`
+        : `${GEMINI.BASE_URL}/models/${encodeURIComponent(model)}:generateContent`;
+
+      const fetchOptions = provider === PROVIDERS.OPENAI
+        ? {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${apiKey}`
+            },
+            body: JSON.stringify(openaiBody)
+          }
+        : {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-goog-api-key": apiKey
+            },
+            body: JSON.stringify(geminiBody)
+          };
 
       for (let attempt = 0; attempt <= retries; attempt++) {
         const attemptStart = Date.now();
         try {
           if (attempt > 0) diagInc("retries", 1);
 
-          const resp = await fetchWithTimeout(
-            url,
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "x-goog-api-key": apiKey
-              },
-              body: JSON.stringify(body)
-            },
-            timeoutMs
-          );
+          const resp = await fetchWithTimeout(url, fetchOptions, timeoutMs);
 
           if (!resp || !resp.ok) {
             const status = resp?.status || 0;
@@ -367,45 +515,44 @@ export async function geminiGenerate(req) {
             let errJson = null;
             try {
               errJson = await resp.json();
-              msg = errJson?.error?.message || msg;
+              msg = errJson?.error?.message || errJson?.message || msg;
             } catch { /* ignore */ }
 
             const code = classifyHttpError(status, msg);
             const lat = Date.now() - attemptStart;
 
-            // Log de l'échec
-            diagTrackRequest({ success: false, code, message: msg, httpStatus: status, latencyMs: lat, model, functionName: req.functionName });
+            diagTrackRequest({ success: false, code, message: msg, httpStatus: status, latencyMs: lat, model, functionName: req.functionName, provider });
 
             if (attempt < retries && isRetriableHttpStatus(status)) {
               await sleep(400 * Math.pow(2, attempt));
               continue;
             }
 
-            const diagnostics = buildDiagnostics({ json: errJson || {}, status, cacheKey, latencyMs: lat });
-            diagError(code, msg, status);
-            return { ok: false, code, errorCode: code, message: msg, httpStatus: status, diagnostics };
+            const diagnostics = buildDiagnostics({ provider, json: errJson || {}, status, cacheKey, latencyMs: lat });
+            diagError(code, msg, status, provider);
+            return { ok: false, code, errorCode: code, message: msg, httpStatus: status, diagnostics, provider, model };
           }
 
           // SUCCES
           const json = await resp.json();
           const lat = Date.now() - attemptStart;
-          const diagnostics = buildDiagnostics({ json, status: resp.status, cacheKey, latencyMs: lat });
+          const diagnostics = buildDiagnostics({ provider, json, status: resp.status, cacheKey, latencyMs: lat });
 
-          if (isBlockedResponse(json)) {
+          if (isBlockedResponse(provider, json)) {
             const msg = diagnostics.blockReason ? `Blocked: ${diagnostics.blockReason}` : "Blocked by safety settings";
-            diagError(ERR.BLOCKED, msg, resp.status);
-            diagTrackRequest({ success: false, code: ERR.BLOCKED, message: msg, httpStatus: resp.status, latencyMs: lat, model, functionName: req.functionName });
-            return { ok: false, code: ERR.BLOCKED, errorCode: ERR.BLOCKED, message: msg, httpStatus: resp.status, diagnostics };
+            diagError(ERR.BLOCKED, msg, resp.status, provider);
+            diagTrackRequest({ success: false, code: ERR.BLOCKED, message: msg, httpStatus: resp.status, latencyMs: lat, model, functionName: req.functionName, provider });
+            return { ok: false, code: ERR.BLOCKED, errorCode: ERR.BLOCKED, message: msg, httpStatus: resp.status, diagnostics, provider, model };
           }
 
-          const { text, candidatesCount, finishReason } = extractCandidateText(json);
+          const { text, candidatesCount, finishReason } = provider === PROVIDERS.OPENAI ? extractOpenAIText(json) : extractGeminiText(json);
           const normalizedText = typeof text === "string" ? text : "";
 
           if (!normalizedText.trim()) {
             const msg = candidatesCount === 0 ? "Empty response" : `Empty response (finish: ${finishReason})`;
-            diagError(ERR.EMPTY_RESPONSE, msg, resp.status);
-            diagTrackRequest({ success: false, code: ERR.EMPTY_RESPONSE, message: msg, httpStatus: resp.status, latencyMs: lat, model, functionName: req.functionName });
-            return { ok: false, code: ERR.EMPTY_RESPONSE, errorCode: ERR.EMPTY_RESPONSE, message: msg, httpStatus: resp.status, diagnostics };
+            diagError(ERR.EMPTY_RESPONSE, msg, resp.status, provider);
+            diagTrackRequest({ success: false, code: ERR.EMPTY_RESPONSE, message: msg, httpStatus: resp.status, latencyMs: lat, model, functionName: req.functionName, provider });
+            return { ok: false, code: ERR.EMPTY_RESPONSE, errorCode: ERR.EMPTY_RESPONSE, message: msg, httpStatus: resp.status, diagnostics, provider, model };
           }
 
           // IMPORTANT: do not truncate the raw model output here.
@@ -416,8 +563,11 @@ export async function geminiGenerate(req) {
           if (cacheMode !== "none") ST.memCache.set(cacheKey, cleaned);
           if (cacheMode === "persistent") await persistSet(cacheKey, cleaned);
 
-          diagSuccess({ model, latencyMs: lat, cacheKey, cached: false });
-          // LOG SUCCESS COMPLET avec Usage
+          const groundingMetadata = provider === PROVIDERS.GEMINI
+            ? (json?.candidates?.[0]?.groundingMetadata || json?.groundingMetadata)
+            : undefined;
+
+          diagSuccess({ model, latencyMs: lat, cacheKey, cached: false, provider });
           diagTrackRequest({ 
             success: true, 
             code: "OK", 
@@ -426,10 +576,11 @@ export async function geminiGenerate(req) {
             latencyMs: lat, 
             model, 
             cached: false,
-            functionName: req.functionName
+            functionName: req.functionName,
+            provider
           });
 
-          return { ok: true, text: cleaned, cached: false, cacheKey, latencyMs: lat, diagnostics };
+          return { ok: true, text: cleaned, cached: false, provider, model, cacheKey, latencyMs: lat, diagnostics, groundingMetadata };
           
         } catch (e) {
           const msg = (e?.name === "AbortError" || e?.message === "timeout") ? "Timeout" : (e?.message || "Network error");
@@ -441,17 +592,17 @@ export async function geminiGenerate(req) {
             continue;
           }
 
-          diagError(code, msg, 0);
-          diagTrackRequest({ success: false, code, message: msg, latencyMs: lat, model, functionName: req.functionName });
+          diagError(code, msg, 0, provider);
+          diagTrackRequest({ success: false, code, message: msg, latencyMs: lat, model, functionName: req.functionName, provider });
           
-          const diagnostics = buildDiagnostics({ json: {}, status: 0, cacheKey, latencyMs: lat });
-          return { ok: false, code, errorCode: code, message: msg, httpStatus: 0, diagnostics };
+          const diagnostics = buildDiagnostics({ provider, json: {}, status: 0, cacheKey, latencyMs: lat });
+          return { ok: false, code, errorCode: code, message: msg, httpStatus: 0, diagnostics, provider, model };
         }
       }
 
-      diagError(ERR.API_ERROR, "Unknown error", 0);
-      diagTrackRequest({ success: false, code: ERR.API_ERROR, message: "Unknown", latencyMs: Date.now() - started, model, functionName: req.functionName });
-      return { ok: false, code: ERR.API_ERROR, errorCode: ERR.API_ERROR, message: "Unknown error", httpStatus: 0, diagnostics: {} };
+      diagError(ERR.API_ERROR, "Unknown error", 0, provider);
+      diagTrackRequest({ success: false, code: ERR.API_ERROR, message: "Unknown", latencyMs: Date.now() - started, model, functionName: req.functionName, provider });
+      return { ok: false, code: ERR.API_ERROR, errorCode: ERR.API_ERROR, message: "Unknown error", httpStatus: 0, diagnostics: {}, provider, model };
     } finally {
       release();
     }
@@ -464,6 +615,7 @@ export async function geminiGenerate(req) {
 
 export async function geminiMinimalTest(options = {}) {
   const res = await geminiGenerate({
+    provider: options.provider,
     model: options.model,
     system: "You are a connectivity test. Reply with exactly: OK",
     user: "Return OK.",
@@ -475,5 +627,5 @@ export async function geminiMinimalTest(options = {}) {
   });
 
   if (!res.ok) return res;
-  return { ok: true, text: "OK", diagnostics: res.diagnostics };
+  return { ok: true, text: "OK", diagnostics: res.diagnostics, provider: res.provider, model: res.model };
 }
