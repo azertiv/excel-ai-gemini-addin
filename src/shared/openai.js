@@ -247,6 +247,7 @@ export async function openaiGenerate(req) {
   const body = {
     model,
     messages,
+    temperature: typeof generationConfig.temperature === "number" ? generationConfig.temperature : DEFAULTS.temperature,
     max_completion_tokens: maxTokens
   };
 
