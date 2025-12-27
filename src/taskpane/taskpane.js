@@ -1,7 +1,7 @@
 // src/taskpane/taskpane.js
 
 import { getApiKey, setApiKey, clearApiKey, getMaxTokens, setMaxTokens, storageBackend } from "../shared/storage";
-import { geminiMinimalTest } from "../shared/gemini";
+import { openaiMinimalTest } from "../shared/openai";
 import { getDiagnosticsSnapshot, resetDiagnosticsLogs } from "../shared/diagnostics";
 import { DEFAULTS, TOKEN_LIMITS } from "../shared/constants";
 
@@ -442,7 +442,7 @@ async function onSave() {
     } else {
         const currentKey = await getApiKey();
         if (!currentKey) {
-             setMessage("Collez une clé API Gemini valide.", "warn");
+             setMessage("Collez une clé API OpenAI valide.", "warn");
              return;
         }
     }
@@ -472,7 +472,7 @@ async function onTest() {
   setMessage("Test en cours...", "info");
   setTestDiagnostics("");
   try {
-    const res = await geminiMinimalTest({ timeoutMs: 10000 });
+    const res = await openaiMinimalTest({ timeoutMs: 10000 });
     if (res.ok) {
       setMessage("Test API : OK", "ok");
       setTestDiagnostics(formatTestDiagnostics(res));

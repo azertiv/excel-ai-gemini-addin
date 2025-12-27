@@ -1,12 +1,12 @@
 export const STORAGE = {
-  API_KEY: "AI_GEMINI_API_KEY_V1",
-  MAX_TOKENS: "AI_GEMINI_MAX_TOKENS_V1",
+  API_KEY: "AI_OPENAI_API_KEY_V1",
+  MAX_TOKENS: "AI_OPENAI_MAX_TOKENS_V1",
   PERSIST_CACHE_INDEX: "AI_PERSIST_CACHE_INDEX_V1"
 };
 
-export const GEMINI = {
-  BASE_URL: "https://generativelanguage.googleapis.com/v1beta",
-  DEFAULT_MODEL: "gemini-3-flash-preview"
+export const OPENAI = {
+  BASE_URL: "https://api.openai.com/v1",
+  DEFAULT_MODEL: "gpt-5.0-mini"
 };
 
 // Global output token limit (maxOutputTokens) bounds exposed in the taskpane.

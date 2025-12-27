@@ -1,7 +1,7 @@
 // src/functions/functions.js
 /* global CustomFunctions */
 
-import { geminiGenerate, geminiMinimalTest } from "../shared/gemini.js";
+import { openaiGenerate, openaiMinimalTest } from "../shared/openai.js";
 import { getApiKey } from "../shared/storage.js";
 import { ERR, DEFAULTS, LIMITS, TOKEN_LIMITS } from "../shared/constants.js";
 
@@ -420,7 +420,7 @@ function sysFormula(lang) {
 
   // ---------- core call wrapper ----------
 
-async function callGemini({ system, user, options, functionName }) {
+async function callOpenAI({ system, user, options, functionName }) {
   const opt = options || {};
   const temperature = typeof opt.temperature === "number"
     ? clamp(opt.temperature, 0, 1, DEFAULTS.temperature)
@@ -453,7 +453,7 @@ async function callGemini({ system, user, options, functionName }) {
   const generationConfig = { temperature };
   if (typeof maxOutputTokens === "number") generationConfig.maxOutputTokens = maxOutputTokens;
 
-  const res = await geminiGenerate({
+  const res = await openaiGenerate({
     model: opt.model,
     system,
     user,
@@ -485,7 +485,7 @@ export async function KEY_STATUS() {
 
 export async function TEST() {
   try {
-    const res = await geminiMinimalTest({ timeoutMs: DEFAULTS?.timeoutMs || 15000 });
+    const res = await openaiMinimalTest({ timeoutMs: DEFAULTS?.timeoutMs || 15000 });
     if (!res.ok) return errorCode(res.code);
     return "OK";
   } catch (e) {
@@ -503,7 +503,7 @@ export async function ASK(prompt, contextRange, options) {
       .filter(Boolean)
       .join("\n\n");
 
-    const res = await callGemini({
+    const res = await callOpenAI({
       system: sysAsk(lang),
       user,
       options: opt,
@@ -539,7 +539,7 @@ export async function WEB(prompt, focusRange, showSource) {
       'Schema: {"value": "...", "source": "...", "reason": "..."}'
     ].join("\n\n");
 
-    const res = await callGemini({
+    const res = await callOpenAI({
       system: sysWeb("fr"),
       user,
       options: {
@@ -606,7 +606,7 @@ export async function TRANSLATE(text, targetLang, options) {
       const raw = flatCells[0];
       if (!raw.trim()) return [[""]];
 
-      const res = await callGemini({
+      const res = await callOpenAI({
         system: sysTranslate(lang, 1),
         user: raw,
         options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.2 },
@@ -624,7 +624,7 @@ export async function TRANSLATE(text, targetLang, options) {
       .map((cell, idx) => `${idx + 1}. ${cell ? cell : "<empty>"}`)
       .join("\n");
 
-    const res = await callGemini({
+    const res = await callOpenAI({
       system: sysTranslate(lang, flatCells.length),
       user: ["Cells:", userCells].join("\n"),
       options: {
@@ -691,7 +691,7 @@ export async function CLASSIFY(text, labels, options) {
         `Return only one label. If confidence < ${threshold}, return UNKNOWN.`
       ].join("\n");
 
-      const res = await callGemini({ system, user, options: opt, functionName: "AI.CLASSIFY" });
+      const res = await callOpenAI({ system, user, options: opt, functionName: "AI.CLASSIFY" });
       if (!res.ok) return errorCode(res.code);
 
       return [[normalizeLabel(res.text)]];
@@ -719,7 +719,7 @@ export async function CLASSIFY(text, labels, options) {
 
     const user = ["Cells:", userCells].join("\n");
 
-    const res = await callGemini({
+    const res = await callOpenAI({
       system,
       user,
       options: {
@@ -762,7 +762,7 @@ export async function CLEAN(text, options) {
       if (!raw.trim()) return [[""]];
 
       const lang = opt.lang || "fr";
-      const res = await callGemini({
+      const res = await callOpenAI({
         system: sysClean(lang),
         user: raw,
         options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.0 },
@@ -792,7 +792,7 @@ export async function CLEAN(text, options) {
       userCells
     ].join("\n");
 
-    const res = await callGemini({
+    const res = await callOpenAI({
       system: sysClean(lang, flatCells.length),
       user,
       options: {
@@ -845,7 +845,7 @@ export async function CONSISTENT(text, options) {
       userCells
     ].join("\n");
 
-    const res = await callGemini({
+    const res = await callOpenAI({
       system: sysConsistent(lang, flatCells.length),
       user,
       options: {
@@ -889,7 +889,7 @@ export async function SUMMARIZE(textOrRange, options) {
       const raw = flatCells[0];
       if (!raw.trim()) return [[""]];
 
-      const res = await callGemini({
+      const res = await callOpenAI({
         system: sysSummarize(lang),
         user: raw,
         options: { ...opt, temperature: typeof opt.temperature === "number" ? opt.temperature : 0.2 },
@@ -907,7 +907,7 @@ export async function SUMMARIZE(textOrRange, options) {
       .map((cell, idx) => `${idx + 1}. ${cell ? cell : "<vide>"}`)
       .join("\n");
 
-    const res = await callGemini({
+    const res = await callOpenAI({
       system: sysSummarize(lang, flatCells.length),
       user: ["Cells:", userCells].join("\n"),
       options: {
@@ -971,7 +971,7 @@ export async function EXTRACT(textOrRange, instruction, options) {
       const raw = flatCells[0];
       if (!raw.trim()) return [[errorCode(ERR.NOT_FOUND)]];
 
-      const res = await callGemini({
+      const res = await callOpenAI({
         system: sysExtract(instr, lang),
         user: raw,
         options: {
@@ -1015,7 +1015,7 @@ export async function EXTRACT(textOrRange, instruction, options) {
       userCells
     ].join("\n");
 
-    const res = await callGemini({
+    const res = await callOpenAI({
       system: sysExtract(instr, lang, flatCells.length),
       user,
       options: {
@@ -1082,7 +1082,7 @@ export async function TABLE(prompt, contextRange, options) {
     ].filter(Boolean).join("\n\n");
 
     // APPEL avec responseMimeType 'application/json'
-    const res = await callGemini({
+    const res = await callOpenAI({
       system,
       user,
       options: {
@@ -1158,7 +1158,7 @@ export async function FILL(exampleRange, targetRange, instruction, options) {
       tgtTSV
     ].join("\n");
 
-    const res = await callGemini({
+    const res = await callOpenAI({
       system: sysFill(lang, rowsToFill),
       user,
       options: {
@@ -1195,7 +1195,7 @@ export async function FORMULA(instruction, contextRange, options) {
       .filter(Boolean)
       .join("\n\n");
 
-    const res = await callGemini({
+    const res = await callOpenAI({
       system: sysFormula(lang),
       user,
       options: {

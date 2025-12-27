@@ -1,9 +1,9 @@
 // src/shared/diagnostics.js
 
-// Tarifs approximatifs Gemini 1.5 Flash (par million de tokens)
-// Input: $0.10 / 1M | Output: $0.40 / 1M
-const COST_INPUT_1M = 0.10;
-const COST_OUTPUT_1M = 0.40;
+// Tarifs approximatifs GPT 5.0 Mini (par million de tokens)
+// Input: $0.15 / 1M | Output: $0.60 / 1M
+const COST_INPUT_1M = 0.15;
+const COST_OUTPUT_1M = 0.60;
 
 function getGlobalState() {
   if (typeof window === "undefined") return {};
