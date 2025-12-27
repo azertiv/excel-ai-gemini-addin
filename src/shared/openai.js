@@ -247,9 +247,15 @@ export async function openaiGenerate(req) {
   const body = {
     model,
     messages,
-    temperature: typeof generationConfig.temperature === "number" ? generationConfig.temperature : DEFAULTS.temperature,
-    max_tokens: maxTokens
+    max_completion_tokens: maxTokens
   };
+
+  const temperature = typeof generationConfig.temperature === "number"
+    ? generationConfig.temperature
+    : DEFAULTS.temperature;
+  if (!model.startsWith("gpt-5")) {
+    body.temperature = temperature;
+  }
 
   for (const k of ["topP", "topK", "stopSequences", "candidateCount"]) {
     if (generationConfig[k] !== undefined) {
