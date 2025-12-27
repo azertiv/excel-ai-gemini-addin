@@ -248,7 +248,7 @@ export async function openaiGenerate(req) {
     model,
     messages,
     temperature: typeof generationConfig.temperature === "number" ? generationConfig.temperature : DEFAULTS.temperature,
-    max_tokens: maxTokens
+    max_completion_tokens: maxTokens
   };
 
   for (const k of ["topP", "topK", "stopSequences", "candidateCount"]) {
