@@ -20,6 +20,8 @@
     <AppDomain>azertiv.github.io</AppDomain>
     <AppDomain>generativelanguage.googleapis.com</AppDomain>
     <AppDomain>googleapis.com</AppDomain>
+    <AppDomain>api.openai.com</AppDomain>
+    <AppDomain>openrouter.ai</AppDomain>
   </AppDomains>
 
   <Hosts>

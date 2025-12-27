@@ -1,7 +1,7 @@
 // src/shared/openai.js
 
 import { OPENAI, DEFAULTS, LIMITS, TOKEN_LIMITS, ERR, STORAGE } from "./constants";
-import { getApiKey, getMaxTokens, getItem, setItem, removeItem } from "./storage";
+import { getApiKey, getApiBaseUrl, getMaxTokens, getItem, setItem, removeItem, getPreferredModel } from "./storage";
 import { LRUCache } from "./lru";
 import { hashKey } from "./hash";
 import { diagInc, diagSet, diagError, diagSuccess, diagTrackRequest, getSharedState } from "./diagnostics";
@@ -58,6 +58,18 @@ async function sleep(ms) { return new Promise((res) => setTimeout(res, ms)); }
 
 function sanitizeCacheMode(mode) {
   return (mode === "none" || mode === "memory" || mode === "persistent") ? mode : DEFAULTS.cache;
+}
+
+function normalizeBaseUrl(url) {
+  const raw = (url || "").trim();
+  if (!raw) return OPENAI.BASE_URL;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return OPENAI.BASE_URL;
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return OPENAI.BASE_URL;
+  }
 }
 
 function isRetriableHttpStatus(status) {
@@ -209,8 +221,12 @@ export async function openaiGenerate(req) {
     return { ok: false, code: ERR.KEY_MISSING, message: "OpenAI API key missing" };
   }
 
-  const modelRaw = (req.model || OPENAI.DEFAULT_MODEL).trim();
+  const storedModel = await getPreferredModel();
+  const modelRaw = (req.model || storedModel || OPENAI.DEFAULT_MODEL).trim();
   const model = modelRaw.startsWith("gpt-") ? modelRaw : modelRaw;
+
+  const baseUrlStored = await getApiBaseUrl();
+  const baseUrl = normalizeBaseUrl(req.baseUrl || baseUrlStored || OPENAI.BASE_URL);
 
   const cacheMode = sanitizeCacheMode(req.cache);
   const ttlMs = Math.max(0, Number(req.cacheTtlSec || DEFAULTS.cacheTtlSec)) * 1000;
@@ -330,7 +346,7 @@ export async function openaiGenerate(req) {
   const p = (async () => {
     const release = await ST.semaphore.acquire();
     try {
-      const url = `${OPENAI.BASE_URL}/chat/completions`;
+      const url = `${baseUrl}/chat/completions`;
       const timeoutMs = Number.isFinite(req.timeoutMs) ? req.timeoutMs : DEFAULTS.timeoutMs;
       const retries = Number.isFinite(req.retry) ? Math.max(0, Math.min(3, Math.floor(req.retry))) : DEFAULTS.retry;
 

@@ -66,6 +66,12 @@ export async function removeItem(key) {
 let _apiKeyLoaded = false;
 let _apiKeyValue = "";
 let _apiKeyLoadPromise = null;
+let _apiBaseLoaded = false;
+let _apiBaseValue = "";
+let _apiBaseLoadPromise = null;
+let _modelLoaded = false;
+let _modelValue = "";
+let _modelLoadPromise = null;
 
 export async function getApiKey() {
   if (_apiKeyLoaded) return _apiKeyValue;
@@ -90,6 +96,76 @@ export async function setApiKey(apiKey) {
   if (!key) await removeItem(STORAGE.API_KEY);
   else await setItem(STORAGE.API_KEY, key);
 
+  return true;
+}
+
+function normalizeUrl(url) {
+  const trimmed = (url || "").trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    return parsed.origin + parsed.pathname.replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+export async function getApiBaseUrl() {
+  if (_apiBaseLoaded) return _apiBaseValue;
+  if (_apiBaseLoadPromise) return await _apiBaseLoadPromise;
+
+  _apiBaseLoadPromise = (async () => {
+    const v = (await getItem(STORAGE.API_BASE_URL)) || "";
+    _apiBaseValue = normalizeUrl(v);
+    _apiBaseLoaded = true;
+    return _apiBaseValue;
+  })();
+
+  return await _apiBaseLoadPromise;
+}
+
+export async function setApiBaseUrl(url) {
+  const normalized = normalizeUrl(url);
+  _apiBaseValue = normalized;
+  _apiBaseLoaded = true;
+  _apiBaseLoadPromise = null;
+
+  if (!normalized) await removeItem(STORAGE.API_BASE_URL);
+  else await setItem(STORAGE.API_BASE_URL, normalized);
+  return true;
+}
+
+export async function clearApiBaseUrl() {
+  _apiBaseValue = "";
+  _apiBaseLoaded = true;
+  _apiBaseLoadPromise = null;
+  await removeItem(STORAGE.API_BASE_URL);
+  return true;
+}
+
+export async function getPreferredModel() {
+  if (_modelLoaded) return _modelValue;
+  if (_modelLoadPromise) return await _modelLoadPromise;
+
+  _modelLoadPromise = (async () => {
+    const v = (await getItem(STORAGE.PREFERRED_MODEL)) || "";
+    _modelValue = typeof v === "string" ? v.trim() : "";
+    _modelLoaded = true;
+    return _modelValue;
+  })();
+
+  return await _modelLoadPromise;
+}
+
+export async function setPreferredModel(model) {
+  const trimmed = (model || "").trim();
+  _modelValue = trimmed;
+  _modelLoaded = true;
+  _modelLoadPromise = null;
+
+  if (!trimmed) await removeItem(STORAGE.PREFERRED_MODEL);
+  else await setItem(STORAGE.PREFERRED_MODEL, trimmed);
   return true;
 }
 

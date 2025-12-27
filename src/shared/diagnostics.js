@@ -1,6 +1,6 @@
 // src/shared/diagnostics.js
 
-// Tarifs approximatifs GPT 5.0 Mini (par million de tokens)
+// Tarifs approximatifs GPT-5.0 mini (par million de tokens)
 // Input: $0.15 / 1M | Output: $0.60 / 1M
 const COST_INPUT_1M = 0.15;
 const COST_OUTPUT_1M = 0.60;

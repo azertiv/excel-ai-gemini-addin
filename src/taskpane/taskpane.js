@@ -1,9 +1,9 @@
 // src/taskpane/taskpane.js
 
-import { getApiKey, setApiKey, clearApiKey, getMaxTokens, setMaxTokens, storageBackend } from "../shared/storage";
+import { getApiKey, setApiKey, clearApiKey, getMaxTokens, setMaxTokens, storageBackend, getApiBaseUrl, setApiBaseUrl, getPreferredModel, setPreferredModel } from "../shared/storage";
 import { openaiMinimalTest } from "../shared/openai";
 import { getDiagnosticsSnapshot, resetDiagnosticsLogs } from "../shared/diagnostics";
-import { DEFAULTS, TOKEN_LIMITS } from "../shared/constants";
+import { DEFAULTS, TOKEN_LIMITS, OPENAI } from "../shared/constants";
 
 const TOKEN_STEPS = (() => {
   const steps = [];
@@ -411,11 +411,23 @@ async function refreshKeyStatus() {
   const key = (await getApiKey()) || "";
   const maxTokens = await getMaxTokens();
   const backend = await storageBackend();
+  const apiBase = await getApiBaseUrl();
+  const preferredModel = await getPreferredModel();
 
   els.keyStatus.textContent = key ? "OK" : "MISSING";
   els.keyStatus.className = key ? "status ok" : "status missing";
 
   setTokenUIValue(maxTokens ?? DEFAULTS.maxTokens);
+
+  if (els.apiBaseInput) {
+    els.apiBaseInput.value = apiBase || "";
+    els.apiBaseInput.placeholder = OPENAI.BASE_URL;
+  }
+
+  if (els.modelInput) {
+    els.modelInput.value = preferredModel || "";
+    els.modelInput.placeholder = OPENAI.DEFAULT_MODEL;
+  }
 
   els.backend.textContent =
     backend === "office" ? "OfficeRuntime.storage" :
@@ -431,6 +443,8 @@ function setMessage(msg, kind = "info") {
 async function onSave() {
   try {
     const v = (els.apiKeyInput.value || "").trim();
+    const base = (els.apiBaseInput?.value || "").trim();
+    const model = (els.modelInput?.value || "").trim();
     const sliderTokens = els.maxTokensSlider ? sliderValueToTokens(els.maxTokensSlider.value) : undefined;
     const rawTokenInput = (els.maxTokensInput?.value || "").trim();
     const preferredValue = rawTokenInput !== "" ? rawTokenInput : sliderTokens;
@@ -447,6 +461,8 @@ async function onSave() {
         }
     }
 
+    await setApiBaseUrl(base);
+    await setPreferredModel(model);
     await setMaxTokens(t);
 
     setMessage("Configuration sauvegardée.", "ok");
@@ -503,6 +519,8 @@ async function onTest() {
 function wireUi() {
   els = {
     apiKeyInput: $("apiKeyInput"),
+    apiBaseInput: $("apiBaseInput"),
+    modelInput: $("modelInput"),
     maxTokensInput: $("maxTokensInput"),
     maxTokensSlider: $("maxTokensSlider"),
     maxTokensValue: $("maxTokensValue"),

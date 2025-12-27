@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>AI Settings (OpenAI GPT 5.0 Mini)</title>
+  <title>AI Settings (OpenAI GPT-5.0 mini)</title>
   <link rel="stylesheet" href="taskpane.css" />
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
   <style>
@@ -215,6 +215,18 @@
             <div class="row">
                 <label for="apiKeyInput">OpenAI API Key</label>
                 <input id="apiKeyInput" type="password" placeholder="Collez la clé API ici" autocomplete="off" />
+            </div>
+
+            <div class="row" style="margin-top:10px;">
+                <label for="apiBaseInput">API Base URL (optionnel)</label>
+                <input id="apiBaseInput" type="text" placeholder="https://api.openai.com/v1" autocomplete="off" />
+                <div class="muted">Laissez vide pour utiliser l'API OpenAI par défaut ou indiquez votre endpoint (Azure/OpenRouter).</div>
+            </div>
+
+            <div class="row" style="margin-top:10px;">
+                <label for="modelInput">Modèle préféré</label>
+                <input id="modelInput" type="text" placeholder="gpt-5.0-mini" autocomplete="off" />
+                <div class="muted">Saisissez le nom exact de votre déploiement (ex: gpt-5.0-mini ou un alias Azure).</div>
             </div>
 
             <div class="row" style="margin-top:10px;">
